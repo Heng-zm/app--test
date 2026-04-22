@@ -71,11 +71,17 @@ class _HomeScreenState extends State<HomeScreen> {
       backgroundColor: AppTheme.bgDeep,
       title: Row(children: [
         Container(
-          width: 8, height: 8,
+          width: 8,
+          height: 8,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             color: AppTheme.accentCyan,
-            boxShadow: [BoxShadow(color: AppTheme.accentCyan.withOpacity(0.7), blurRadius: 8, spreadRadius: 2)],
+            boxShadow: [
+              BoxShadow(
+                  color: AppTheme.accentCyan.withOpacity(0.7),
+                  blurRadius: 8,
+                  spreadRadius: 2)
+            ],
           ),
         ),
         const SizedBox(width: 10),
@@ -111,7 +117,6 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildNarrowLayout(BuildContext context) {
     return Consumer<BluetoothService>(
       builder: (context, service, _) {
-        _navigateToChatIfConnected(context, service);
         return Column(children: [
           _buildStatusBar(service),
           Expanded(child: _buildScrollContent(context, service)),
@@ -123,7 +128,6 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildWideLayout(BuildContext context) {
     return Consumer<BluetoothService>(
       builder: (context, service, _) {
-        _navigateToChatIfConnected(context, service);
         return Row(children: [
           // Left panel: scan + device list
           SizedBox(
@@ -134,43 +138,28 @@ class _HomeScreenState extends State<HomeScreen> {
             ]),
           ),
           Container(width: 1, color: AppTheme.borderGlow),
-          // Right panel: placeholder / chat preview
+
+          // Right panel: Chat UI or Placeholder
           Expanded(
-            child: Center(
-              child: Column(mainAxisSize: MainAxisSize.min, children: [
-                const Icon(Icons.bluetooth, color: AppTheme.textDim, size: 48),
-                const SizedBox(height: 16),
-                Text(
-                  service.isConnected
-                      ? 'Connected to ${service.connectedDeviceName}'
-                      : 'Select a device to start chatting',
-                  style: const TextStyle(color: AppTheme.textSecondary, fontSize: 14),
-                ),
-                if (service.isConnected) ...[
-                  const SizedBox(height: 20),
-                  ElevatedButton(
-                    onPressed: () => Navigator.push(context,
-                        MaterialPageRoute(builder: (_) => const ChatScreen())),
-                    child: const Text('OPEN CHAT'),
+            child: service.isConnected
+                // IMPROVEMENT: Render Chat directly in the right pane for tablets
+                ? const ChatScreen()
+                : Center(
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                      const Icon(Icons.bluetooth,
+                          color: AppTheme.textDim, size: 48),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Select a device to start chatting',
+                        style: TextStyle(
+                            color: AppTheme.textSecondary, fontSize: 14),
+                      ),
+                    ]),
                   ),
-                ],
-              ]),
-            ),
           ),
         ]);
       },
     );
-  }
-
-  void _navigateToChatIfConnected(BuildContext context, BluetoothService service) {
-    if (service.isConnected && MediaQuery.of(context).size.width < 720) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          Navigator.pushReplacement(context,
-              MaterialPageRoute(builder: (_) => const ChatScreen()));
-        }
-      });
-    }
   }
 
   // ── Content ─────────────────────────────────────────────────────────────
@@ -187,13 +176,15 @@ class _HomeScreenState extends State<HomeScreen> {
           const SizedBox(height: 20),
           _buildSectionHeader('PAIRED DEVICES', Icons.devices),
           const SizedBox(height: 10),
-          ...service.pairedDevices.map((d) => _buildDeviceTile(context, d, service)),
+          ...service.pairedDevices
+              .map((d) => _buildDeviceTile(context, d, service)),
         ],
         if (service.discovered.isNotEmpty) ...[
           const SizedBox(height: 20),
           _buildSectionHeader('NEARBY DEVICES', Icons.bluetooth_searching),
           const SizedBox(height: 10),
-          ...service.discovered.map((d) => _buildDeviceTile(context, d, service)),
+          ...service.discovered
+              .map((d) => _buildDeviceTile(context, d, service)),
         ],
         if (service.isDiscovering && service.discovered.isEmpty) ...[
           const SizedBox(height: 32),
@@ -211,15 +202,30 @@ class _HomeScreenState extends State<HomeScreen> {
     IconData icon;
     switch (service.state) {
       case BtConnectionState.connecting:
-        color = AppTheme.warning; text = 'CONNECTING...'; icon = Icons.bluetooth_searching;
+        color = AppTheme.warning;
+        text = 'CONNECTING...';
+        icon = Icons.bluetooth_searching;
+        break;
       case BtConnectionState.scanning:
-        color = AppTheme.accentCyan; text = 'SCANNING'; icon = Icons.radar;
+        color = AppTheme.accentCyan;
+        text = 'SCANNING';
+        icon = Icons.radar;
+        break;
       case BtConnectionState.connected:
-        color = AppTheme.accentGreen; text = 'CONNECTED'; icon = Icons.bluetooth_connected;
+        color = AppTheme.accentGreen;
+        text = 'CONNECTED';
+        icon = Icons.bluetooth_connected;
+        break;
       case BtConnectionState.error:
-        color = AppTheme.danger; text = 'ERROR'; icon = Icons.error_outline;
+        color = AppTheme.danger;
+        text = 'ERROR';
+        icon = Icons.error_outline;
+        break;
       default:
-        color = AppTheme.textDim; text = 'READY'; icon = Icons.bluetooth;
+        color = AppTheme.textDim;
+        text = 'READY';
+        icon = Icons.bluetooth;
+        break;
     }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
@@ -230,7 +236,12 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Row(children: [
         Icon(icon, color: color, size: 13),
         const SizedBox(width: 8),
-        Text(text, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
+        Text(text,
+            style: TextStyle(
+                color: color,
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 1.5)),
         const Spacer(),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -239,7 +250,10 @@ class _HomeScreenState extends State<HomeScreen> {
             borderRadius: BorderRadius.circular(4),
           ),
           child: Text('AES-256 · RANDOM IV',
-              style: TextStyle(color: AppTheme.accentCyan.withOpacity(0.7), fontSize: 9, letterSpacing: 1)),
+              style: TextStyle(
+                  color: AppTheme.accentCyan.withOpacity(0.7),
+                  fontSize: 9,
+                  letterSpacing: 1)),
         ),
       ]),
     );
@@ -256,42 +270,55 @@ class _HomeScreenState extends State<HomeScreen> {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(16),
             gradient: const LinearGradient(
-              begin: Alignment.topLeft, end: Alignment.bottomRight,
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
               colors: [AppTheme.bgCard, AppTheme.bgSurface],
             ),
             border: Border.all(
-              color: scanning ? AppTheme.accentCyan.withOpacity(0.5) : AppTheme.borderGlow,
+              color: scanning
+                  ? AppTheme.accentCyan.withOpacity(0.5)
+                  : AppTheme.borderGlow,
             ),
           ),
           child: Row(children: [
             scanning
                 ? const ScanAnimation(size: 52)
                 : Container(
-                    width: 52, height: 52,
+                    width: 52,
+                    height: 52,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       color: AppTheme.accentCyan.withOpacity(0.1),
-                      border: Border.all(color: AppTheme.accentCyan.withOpacity(0.35)),
+                      border: Border.all(
+                          color: AppTheme.accentCyan.withOpacity(0.35)),
                     ),
-                    child: const Icon(Icons.bluetooth_searching, color: AppTheme.accentCyan, size: 26),
+                    child: const Icon(Icons.bluetooth_searching,
+                        color: AppTheme.accentCyan, size: 26),
                   ),
             const SizedBox(width: 16),
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(
-                scanning ? 'SCANNING...' : 'SCAN FOR DEVICES',
-                style: const TextStyle(color: AppTheme.accentCyan, fontSize: 13,
-                    fontWeight: FontWeight.bold, letterSpacing: 1.5),
-              ),
-              const SizedBox(height: 3),
-              Text(
-                scanning
-                    ? 'Tap to stop · ${service.discovered.length} found'
-                    : AppPlatform.supportsClassicBluetooth
-                        ? 'Classic + BLE scan'
-                        : 'BLE scan',
-                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11),
-              ),
-            ])),
+            Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                  Text(
+                    scanning ? 'SCANNING...' : 'SCAN FOR DEVICES',
+                    style: const TextStyle(
+                        color: AppTheme.accentCyan,
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 1.5),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    scanning
+                        ? 'Tap to stop · ${service.discovered.length} found'
+                        : AppPlatform.supportsClassicBluetooth
+                            ? 'Classic + BLE scan'
+                            : 'BLE scan',
+                    style: const TextStyle(
+                        color: AppTheme.textSecondary, fontSize: 11),
+                  ),
+                ])),
             Icon(
               scanning ? Icons.stop_circle : Icons.play_circle,
               color: scanning ? AppTheme.danger : AppTheme.accentCyan,
@@ -307,14 +334,19 @@ class _HomeScreenState extends State<HomeScreen> {
     return Row(children: [
       Icon(icon, size: 13, color: AppTheme.textSecondary),
       const SizedBox(width: 7),
-      Text(title, style: const TextStyle(color: AppTheme.textSecondary,
-          fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 2)),
+      Text(title,
+          style: const TextStyle(
+              color: AppTheme.textSecondary,
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 2)),
       const SizedBox(width: 10),
       const Expanded(child: Divider(color: AppTheme.borderGlow, height: 1)),
     ]);
   }
 
-  Widget _buildDeviceTile(BuildContext context, BTDevice device, BluetoothService service) {
+  Widget _buildDeviceTile(
+      BuildContext context, BTDevice device, BluetoothService service) {
     final isConnecting = service.state == BtConnectionState.connecting;
     return Container(
       margin: const EdgeInsets.only(bottom: 9),
@@ -326,7 +358,8 @@ class _HomeScreenState extends State<HomeScreen> {
       child: ListTile(
         contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
         leading: Container(
-          width: 42, height: 42,
+          width: 42,
+          height: 42,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             color: AppTheme.bgSurface,
@@ -338,27 +371,38 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           child: Icon(
             device.isBLE ? Icons.bluetooth : Icons.phone_android,
-            color: device.isPaired ? AppTheme.accentTeal : AppTheme.textSecondary,
+            color:
+                device.isPaired ? AppTheme.accentTeal : AppTheme.textSecondary,
             size: 18,
           ),
         ),
         title: Text(device.name,
-            style: const TextStyle(color: AppTheme.textPrimary, fontSize: 13, fontWeight: FontWeight.w600)),
+            style: const TextStyle(
+                color: AppTheme.textPrimary,
+                fontSize: 13,
+                fontWeight: FontWeight.w600)),
         subtitle: Row(children: [
           Text(device.displayAddress,
-              style: const TextStyle(color: AppTheme.textDim, fontSize: 10, fontFamily: 'monospace')),
+              style: const TextStyle(
+                  color: AppTheme.textDim,
+                  fontSize: 10,
+                  fontFamily: 'monospace')),
           const SizedBox(width: 6),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
             decoration: BoxDecoration(
-              color: (device.isBLE ? AppTheme.accentPurple : AppTheme.accentTeal).withOpacity(0.15),
+              color:
+                  (device.isBLE ? AppTheme.accentPurple : AppTheme.accentTeal)
+                      .withOpacity(0.15),
               borderRadius: BorderRadius.circular(4),
             ),
             child: Text(
               device.type,
               style: TextStyle(
-                color: device.isBLE ? AppTheme.accentPurple : AppTheme.accentTeal,
-                fontSize: 8, fontWeight: FontWeight.bold,
+                color:
+                    device.isBLE ? AppTheme.accentPurple : AppTheme.accentTeal,
+                fontSize: 8,
+                fontWeight: FontWeight.bold,
               ),
             ),
           ),
@@ -368,20 +412,28 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ]),
         trailing: isConnecting
-            ? const SizedBox(width: 18, height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.accentCyan))
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: AppTheme.accentCyan))
             : GestureDetector(
                 onTap: () => _connect(context, device, service),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 5),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 11, vertical: 5),
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(7),
-                    border: Border.all(color: AppTheme.accentCyan.withOpacity(0.5)),
+                    border:
+                        Border.all(color: AppTheme.accentCyan.withOpacity(0.5)),
                     color: AppTheme.accentCyan.withOpacity(0.07),
                   ),
                   child: const Text('CONNECT',
-                      style: TextStyle(color: AppTheme.accentCyan, fontSize: 10,
-                          fontWeight: FontWeight.bold, letterSpacing: 1)),
+                      style: TextStyle(
+                          color: AppTheme.accentCyan,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 1)),
                 ),
               ),
       ),
@@ -393,8 +445,11 @@ class _HomeScreenState extends State<HomeScreen> {
       const ScanAnimation(size: 72),
       const SizedBox(height: 14),
       Text('SEARCHING FOR DEVICES...',
-          style: TextStyle(color: AppTheme.accentCyan.withOpacity(0.5),
-              fontSize: 10, letterSpacing: 2, fontWeight: FontWeight.bold)),
+          style: TextStyle(
+              color: AppTheme.accentCyan.withOpacity(0.5),
+              fontSize: 10,
+              letterSpacing: 2,
+              fontWeight: FontWeight.bold)),
     ]);
   }
 
@@ -409,8 +464,9 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Row(children: [
         const Icon(Icons.error_outline, color: AppTheme.danger, size: 17),
         const SizedBox(width: 10),
-        Expanded(child: Text(service.errorMessage ?? '',
-            style: const TextStyle(color: AppTheme.danger, fontSize: 12))),
+        Expanded(
+            child: Text(service.errorMessage ?? '',
+                style: const TextStyle(color: AppTheme.danger, fontSize: 12))),
         GestureDetector(
           onTap: service.clearError,
           child: const Icon(Icons.close, size: 15, color: AppTheme.danger),
@@ -420,37 +476,49 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildLoading() {
-    return Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+    return Center(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
       const ScanAnimation(size: 110),
       const SizedBox(height: 22),
       Text('INITIALIZING BLUETOOTH',
-          style: TextStyle(color: AppTheme.accentCyan.withOpacity(0.7),
-              fontSize: 10, letterSpacing: 2, fontWeight: FontWeight.bold)),
+          style: TextStyle(
+              color: AppTheme.accentCyan.withOpacity(0.7),
+              fontSize: 10,
+              letterSpacing: 2,
+              fontWeight: FontWeight.bold)),
     ]));
   }
 
   Widget _buildPermissionDenied() {
-    return Center(child: Padding(
+    return Center(
+        child: Padding(
       padding: const EdgeInsets.all(32),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
         const Icon(Icons.bluetooth_disabled, color: AppTheme.danger, size: 56),
         const SizedBox(height: 20),
         const Text('BLUETOOTH PERMISSION DENIED',
             textAlign: TextAlign.center,
-            style: TextStyle(color: AppTheme.danger, fontSize: 14,
-                fontWeight: FontWeight.bold, letterSpacing: 1)),
+            style: TextStyle(
+                color: AppTheme.danger,
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 1)),
         const SizedBox(height: 12),
         const Text(
           'BT SecureChat needs Bluetooth and Location access to discover and connect to nearby devices.',
           textAlign: TextAlign.center,
-          style: TextStyle(color: AppTheme.textSecondary, fontSize: 13, height: 1.5),
+          style: TextStyle(
+              color: AppTheme.textSecondary, fontSize: 13, height: 1.5),
         ),
         const SizedBox(height: 24),
         ElevatedButton.icon(
           onPressed: () async {
             await PermissionHelper.openSettings();
             if (mounted) {
-              setState(() { _initialized = false; _permissionDenied = false; });
+              setState(() {
+                _initialized = false;
+                _permissionDenied = false;
+              });
               _boot();
             }
           },
@@ -461,8 +529,26 @@ class _HomeScreenState extends State<HomeScreen> {
     ));
   }
 
-  Future<void> _connect(BuildContext context, BTDevice device, BluetoothService service) async {
+  // IMPROVEMENT: Handle navigation properly as a result of an action
+  Future<void> _connect(
+      BuildContext context, BTDevice device, BluetoothService service) async {
     await service.stopDiscovery();
     await service.connectToDevice(device);
+
+    if (!mounted) return;
+
+    // After attempting connection, check if it succeeded
+    if (service.isConnected) {
+      final isWide = MediaQuery.of(context).size.width >= 720;
+
+      // If we are on a phone (narrow), push the screen.
+      // Used `push` instead of `pushReplacement` so the user can hit the back button
+      if (!isWide) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const ChatScreen()),
+        );
+      }
+    }
   }
 }

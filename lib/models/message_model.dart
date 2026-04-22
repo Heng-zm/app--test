@@ -31,6 +31,9 @@ class Message extends HiveObject {
     this.isDecryptionError = false,
   });
 
+  /// Returns true if the message was successfully decrypted
+  bool get isValid => !isDecryptionError;
+
   String get timeString {
     final h = timestamp.hour.toString().padLeft(2, '0');
     final m = timestamp.minute.toString().padLeft(2, '0');
@@ -39,18 +42,16 @@ class Message extends HiveObject {
 
   String get dateString {
     final now = DateTime.now();
-    if (timestamp.year == now.year &&
-        timestamp.month == now.month &&
-        timestamp.day == now.day) {
-      return 'Today';
-    }
-    final yesterday = now.subtract(const Duration(days: 1));
-    if (timestamp.year == yesterday.year &&
-        timestamp.month == yesterday.month &&
-        timestamp.day == yesterday.day) {
-      return 'Yesterday';
-    }
-    return '${timestamp.day}/${timestamp.month}/${timestamp.year}';
+    final today = DateTime(now.year, now.month, now.day);
+    final msgDate = DateTime(timestamp.year, timestamp.month, timestamp.day);
+
+    final difference = today.difference(msgDate).inDays;
+
+    if (difference == 0) return 'Today';
+    if (difference == 1) return 'Yesterday';
+
+    // Format: DD/MM/YYYY
+    return '${timestamp.day.toString().padLeft(2, '0')}/${timestamp.month.toString().padLeft(2, '0')}/${timestamp.year}';
   }
 
   Message copyWith({

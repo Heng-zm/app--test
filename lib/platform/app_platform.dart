@@ -34,6 +34,7 @@ class AppPlatform {
     if (isMacOS) return 'macOS';
     if (isWindows) return 'Windows';
     if (isLinux) return 'Linux';
+    if (isFuchsia) return 'Fuchsia'; // Added for completeness
     return 'Unknown';
   }
 }

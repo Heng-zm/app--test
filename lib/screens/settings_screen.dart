@@ -16,9 +16,10 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   final _passphraseCtrl = TextEditingController();
-  bool  _obscure = true;
-  String _hashPreview = EncryptionService.hashPreview('BT_CHAT_SECURE_KEY_2024');
-  bool  _saved = false;
+  bool _obscure = true;
+  String _hashPreview =
+      EncryptionService.hashPreview('BT_CHAT_SECURE_KEY_2024');
+  bool _saved = false;
 
   @override
   void initState() {
@@ -55,19 +56,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
             preferredSize: const Size.fromHeight(1),
             child: Container(height: 1, color: AppTheme.borderGlow)),
       ),
-      body: ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          _buildStatusCard(),
-          const SizedBox(height: 22),
-          _buildPassphraseSection(),
-          const SizedBox(height: 22),
-          _buildFingerprintCard(),
-          const SizedBox(height: 22),
-          _buildPlatformCard(),
-          const SizedBox(height: 22),
-          _buildTips(),
-        ],
+      // Tap outside to dismiss keyboard
+      body: GestureDetector(
+        onTap: () => FocusScope.of(context).unfocus(),
+        child: ListView(
+          padding: const EdgeInsets.all(20),
+          children: [
+            _buildStatusCard(),
+            const SizedBox(height: 22),
+            _buildPassphraseSection(),
+            const SizedBox(height: 22),
+            _buildFingerprintCard(),
+            const SizedBox(height: 22),
+            _buildPlatformCard(),
+            const SizedBox(height: 22),
+            _buildTips(),
+          ],
+        ),
       ),
     );
   }
@@ -78,25 +83,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(14),
         gradient: LinearGradient(
-          begin: Alignment.topLeft, end: Alignment.bottomRight,
-          colors: [AppTheme.accentCyan.withOpacity(0.09), AppTheme.accentPurple.withOpacity(0.04)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            AppTheme.accentCyan.withOpacity(0.09),
+            AppTheme.accentPurple.withOpacity(0.04)
+          ],
         ),
         border: Border.all(color: AppTheme.accentCyan.withOpacity(0.3)),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          const Icon(Icons.shield_outlined, color: AppTheme.accentCyan, size: 20),
+          const Icon(Icons.shield_outlined,
+              color: AppTheme.accentCyan, size: 20),
           const SizedBox(width: 10),
           const Text('ENCRYPTION STATUS',
-              style: TextStyle(color: AppTheme.accentCyan, fontSize: 12,
-                  fontWeight: FontWeight.bold, letterSpacing: 1.5)),
+              style: TextStyle(
+                  color: AppTheme.accentCyan,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 1.5)),
         ]),
         const SizedBox(height: 14),
         _row('Algorithm', 'AES-256-CBC'),
         _row('Key derivation', 'SHA-256'),
         _row('IV generation', 'Random per message ✓'),
         _row('Version', 'v2 (with legacy fallback)'),
-        _row('Key fingerprint', _hashPreview, mono: true, color: AppTheme.accentGreen),
+        _row('Key fingerprint', _hashPreview,
+            mono: true, color: AppTheme.accentGreen),
       ]),
     );
   }
@@ -105,13 +119,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return Padding(
       padding: const EdgeInsets.only(bottom: 7),
       child: Row(children: [
-        Text(label, style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+        Text(label,
+            style:
+                const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
         const Spacer(),
-        Text(value, style: TextStyle(
-          color: color ?? AppTheme.textPrimary,
-          fontSize: 12, fontWeight: FontWeight.w600,
-          fontFamily: mono ? 'monospace' : null,
-        )),
+        Text(value,
+            style: TextStyle(
+              color: color ?? AppTheme.textPrimary,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              fontFamily: mono ? 'monospace' : null,
+            )),
       ]),
     );
   }
@@ -120,8 +138,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Row(children: [
         const Text('SHARED PASSPHRASE',
-            style: TextStyle(color: AppTheme.textSecondary, fontSize: 10,
-                fontWeight: FontWeight.bold, letterSpacing: 2)),
+            style: TextStyle(
+                color: AppTheme.textSecondary,
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 2)),
         const SizedBox(width: 8),
         if (_saved)
           Container(
@@ -131,7 +152,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               borderRadius: BorderRadius.circular(4),
             ),
             child: const Text('SAVED',
-                style: TextStyle(color: AppTheme.accentGreen, fontSize: 9,
+                style: TextStyle(
+                    color: AppTheme.accentGreen,
+                    fontSize: 9,
                     fontWeight: FontWeight.bold)),
           ),
       ]),
@@ -142,10 +165,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
       TextField(
         controller: _passphraseCtrl,
         obscureText: _obscure,
-        style: const TextStyle(color: AppTheme.textPrimary,
-            fontFamily: 'monospace', fontSize: 14),
+        style: const TextStyle(
+            color: AppTheme.textPrimary, fontFamily: 'monospace', fontSize: 14),
         onChanged: (v) {
-          if (v.isNotEmpty) setState(() => _hashPreview = EncryptionService.hashPreview(v));
+          // IMPROVEMENT: Handle empty strings and remove "SAVED" badge if edited
+          setState(() {
+            _saved = false;
+            _hashPreview = v.isNotEmpty
+                ? EncryptionService.hashPreview(v)
+                : '00000000'; // Default placeholder when empty
+          });
         },
         decoration: InputDecoration(
           hintText: 'Enter shared passphrase…',
@@ -196,10 +225,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
         const SizedBox(width: 12),
         Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           const Text('KEY FINGERPRINT',
-              style: TextStyle(color: AppTheme.textSecondary, fontSize: 9, letterSpacing: 1.5)),
+              style: TextStyle(
+                  color: AppTheme.textSecondary,
+                  fontSize: 9,
+                  letterSpacing: 1.5)),
           Text(_hashPreview,
-              style: const TextStyle(color: AppTheme.accentPurple, fontSize: 20,
-                  fontFamily: 'monospace', fontWeight: FontWeight.bold, letterSpacing: 4)),
+              style: const TextStyle(
+                  color: AppTheme.accentPurple,
+                  fontSize: 20,
+                  fontFamily: 'monospace',
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 4)),
         ]),
         const Spacer(),
         IconButton(
@@ -226,17 +262,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         const Text('PLATFORM CAPABILITIES',
-            style: TextStyle(color: AppTheme.textSecondary, fontSize: 10,
-                fontWeight: FontWeight.bold, letterSpacing: 2)),
+            style: TextStyle(
+                color: AppTheme.textSecondary,
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 2)),
         const SizedBox(height: 12),
         _capRow('Platform', AppPlatform.name),
-        _capRow('Bluetooth Classic (SPP)',
-            AppPlatform.supportsClassicBluetooth ? '✓ Supported' : '✗ Not available',
+        _capRow(
+            'Bluetooth Classic (SPP)',
+            AppPlatform.supportsClassicBluetooth
+                ? '✓ Supported'
+                : '✗ Not available',
             color: AppPlatform.supportsClassicBluetooth
-                ? AppTheme.accentGreen : AppTheme.textDim),
+                ? AppTheme.accentGreen
+                : AppTheme.textDim),
         _capRow('Bluetooth LE (BLE)',
             AppPlatform.supportsBLE ? '✓ Supported' : '✗ Not available',
-            color: AppPlatform.supportsBLE ? AppTheme.accentGreen : AppTheme.textDim),
+            color: AppPlatform.supportsBLE
+                ? AppTheme.accentGreen
+                : AppTheme.textDim),
         _capRow('Runtime permissions',
             AppPlatform.needsRuntimePermissions ? 'Required' : 'Not required',
             color: AppTheme.textSecondary),
@@ -248,60 +293,98 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return Padding(
       padding: const EdgeInsets.only(bottom: 7),
       child: Row(children: [
-        Text(label, style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+        Text(label,
+            style:
+                const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
         const Spacer(),
-        Text(value, style: TextStyle(
-            color: color ?? AppTheme.textPrimary,
-            fontSize: 12, fontWeight: FontWeight.w500)),
+        Text(value,
+            style: TextStyle(
+                color: color ?? AppTheme.textPrimary,
+                fontSize: 12,
+                fontWeight: FontWeight.w500)),
       ]),
     );
   }
 
   Widget _buildTips() {
     const tips = [
-      ('🔐', 'Share the passphrase with your contact via a secure, out-of-band channel.'),
-      ('🔄', 'Change passphrases regularly and after each session for better security.'),
+      (
+        '🔐',
+        'Share the passphrase with your contact via a secure, out-of-band channel.'
+      ),
+      (
+        '🔄',
+        'Change passphrases regularly and after each session for better security.'
+      ),
       ('📋', 'Compare fingerprints on both devices — they must match exactly.'),
-      ('⚠️', 'Messages encrypted with a different passphrase cannot be decrypted.'),
-      ('🔀', 'v2 uses a random IV per message, preventing ciphertext analysis.'),
+      (
+        '⚠️',
+        'Messages encrypted with a different passphrase cannot be decrypted.'
+      ),
+      (
+        '🔀',
+        'v2 uses a random IV per message, preventing ciphertext analysis.'
+      ),
     ];
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       const Text('SECURITY NOTES',
-          style: TextStyle(color: AppTheme.textSecondary, fontSize: 10,
-              fontWeight: FontWeight.bold, letterSpacing: 2)),
+          style: TextStyle(
+              color: AppTheme.textSecondary,
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 2)),
       const SizedBox(height: 12),
       ...tips.map((t) => Padding(
-        padding: const EdgeInsets.only(bottom: 10),
-        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(t.$1, style: const TextStyle(fontSize: 14)),
-          const SizedBox(width: 10),
-          Expanded(child: Text(t.$2,
-              style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12, height: 1.5))),
-        ]),
-      )),
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(t.$1, style: const TextStyle(fontSize: 14)),
+              const SizedBox(width: 10),
+              Expanded(
+                  child: Text(t.$2,
+                      style: const TextStyle(
+                          color: AppTheme.textSecondary,
+                          fontSize: 12,
+                          height: 1.5))),
+            ]),
+          )),
     ]);
   }
 
   void _generatePassphrase() {
     final p = EncryptionService.generatePassphrase();
     _passphraseCtrl.text = p;
-    setState(() { _hashPreview = EncryptionService.hashPreview(p); _obscure = false; });
+    setState(() {
+      _hashPreview = EncryptionService.hashPreview(p);
+      _obscure = false;
+      _saved = false; // Set to false because it hasn't been applied yet
+    });
   }
 
   Future<void> _applyPassphrase() async {
     final p = _passphraseCtrl.text.trim();
     if (p.isEmpty) return;
+
+    // Dismiss keyboard
+    FocusScope.of(context).unfocus();
+
     context.read<BluetoothService>().updatePassphrase(p);
+
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('passphrase', p);
-    setState(() { _hashPreview = EncryptionService.hashPreview(p); _saved = true; });
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: const Text('Passphrase updated and saved'),
-        backgroundColor: AppTheme.accentGreen.withOpacity(0.9),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-      ));
-    }
+
+    // IMPROVEMENT: Proper mounted check before setState
+    if (!mounted) return;
+
+    setState(() {
+      _hashPreview = EncryptionService.hashPreview(p);
+      _saved = true;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: const Text('Passphrase updated and saved'),
+      backgroundColor: AppTheme.accentGreen.withOpacity(0.9),
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+    ));
   }
 }

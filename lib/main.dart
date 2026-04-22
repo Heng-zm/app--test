@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:provider/provider.dart';
+
 import 'models/message_model.dart';
 import 'platform/app_platform.dart';
 import 'services/bluetooth_service.dart';
 import 'screens/home_screen.dart';
+import 'screens/settings_screen.dart'; // Added so we can use it in the nav
 import 'theme/app_theme.dart';
 
 Future<void> main() async {
@@ -48,15 +50,12 @@ class BtSecureChatApp extends StatelessWidget {
         title: 'BT SecureChat',
         debugShowCheckedModeBanner: false,
         theme: AppTheme.darkTheme,
-        // Responsive breakpoint: show sidebar on wide screens
         builder: (context, child) {
-          return MediaQuery(
-            // Clamp text scale so layout never breaks on accessibility sizes
-            data: MediaQuery.of(context).copyWith(
-              textScaler: TextScaler.linear(
-                MediaQuery.of(context).textScaler.scale(1.0).clamp(0.8, 1.3),
-              ),
-            ),
+          // MODERN TEXT CLAMPING (Flutter 3.16+):
+          // Replaces the manual TextScaler math with a built-in function
+          return MediaQuery.withClampedTextScaling(
+            minScaleFactor: 0.8,
+            maxScaleFactor: 1.3,
             child: child!,
           );
         },
@@ -78,10 +77,77 @@ class AppShell extends StatefulWidget {
 class _AppShellState extends State<AppShell> {
   int _index = 0;
 
-  static const _screens = [HomeScreen(), HomeScreen()]; // extended later
+  // Swapped the second HomeScreen placeholder with SettingsScreen
+  static const _screens = [HomeScreen(), SettingsScreen()];
 
   @override
   Widget build(BuildContext context) {
-    return const HomeScreen();
+    // Standardizing the wide breakpoint across the app
+    final isWide = MediaQuery.of(context).size.width >= 720;
+
+    // ── Wide Layout (Desktop / Tablet) ──────────────────────────────────────
+    if (isWide) {
+      return Scaffold(
+        backgroundColor: AppTheme.bgDeep,
+        body: Row(
+          children: [
+            NavigationRail(
+              backgroundColor: AppTheme.bgSurface,
+              selectedIndex: _index,
+              onDestinationSelected: (int index) =>
+                  setState(() => _index = index),
+              selectedIconTheme:
+                  const IconThemeData(color: AppTheme.accentCyan),
+              unselectedIconTheme: const IconThemeData(color: AppTheme.textDim),
+              selectedLabelTextStyle:
+                  const TextStyle(color: AppTheme.accentCyan),
+              unselectedLabelTextStyle:
+                  const TextStyle(color: AppTheme.textDim),
+              labelType: NavigationRailLabelType.all,
+              destinations: const [
+                NavigationRailDestination(
+                  icon: Icon(Icons.bluetooth),
+                  label: Text('Chat'),
+                ),
+                NavigationRailDestination(
+                  icon: Icon(Icons.security),
+                  label: Text('Settings'),
+                ),
+              ],
+            ),
+            const VerticalDivider(
+                thickness: 1, width: 1, color: AppTheme.borderGlow),
+            Expanded(
+              // Wrap with ClipRect to ensure child screens don't overflow into the rail
+              child: ClipRect(child: _screens[_index]),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // ── Narrow Layout (Mobile Phone) ────────────────────────────────────────
+    return Scaffold(
+      backgroundColor: AppTheme.bgDeep,
+      body: _screens[_index],
+      bottomNavigationBar: NavigationBar(
+        backgroundColor: AppTheme.bgSurface,
+        indicatorColor: AppTheme.accentCyan.withOpacity(0.15),
+        selectedIndex: _index,
+        onDestinationSelected: (int index) => setState(() => _index = index),
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.bluetooth, color: AppTheme.textDim),
+            selectedIcon: Icon(Icons.bluetooth, color: AppTheme.accentCyan),
+            label: 'Chat',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.security, color: AppTheme.textDim),
+            selectedIcon: Icon(Icons.security, color: AppTheme.accentCyan),
+            label: 'Settings',
+          ),
+        ],
+      ),
+    );
   }
 }

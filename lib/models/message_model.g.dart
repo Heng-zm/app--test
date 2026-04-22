@@ -23,6 +23,7 @@ class MessageAdapter extends TypeAdapter<Message> {
       encryptedText: fields[2] as String,
       isMine: fields[3] as bool,
       timestamp: fields[4] as DateTime,
+      // Excellent handling of database migrations/new fields
       isDecryptionError: fields[5] as bool? ?? false,
     );
   }

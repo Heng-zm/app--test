@@ -18,8 +18,9 @@ import 'bluetooth_classic_stub.dart'
 // BLE service / characteristic UUIDs (custom)
 // ─────────────────────────────────────────────────────────────────────────────
 const _kServiceUuid = '6E400001-B5A3-F393-E0A9-E50E24DCCA9E'; // NUS-like
-const _kTxUuid     = '6E400003-B5A3-F393-E0A9-E50E24DCCA9E'; // notify (rx on remote)
-const _kRxUuid     = '6E400002-B5A3-F393-E0A9-E50E24DCCA9E'; // write
+const _kTxUuid =
+    '6E400003-B5A3-F393-E0A9-E50E24DCCA9E'; // notify (rx on remote)
+const _kRxUuid = '6E400002-B5A3-F393-E0A9-E50E24DCCA9E'; // write
 
 enum BtConnectionState {
   disconnected,
@@ -29,19 +30,6 @@ enum BtConnectionState {
   error,
 }
 
-/// A single cross-platform Bluetooth chat service.
-///
-/// • Android  → prefers Bluetooth Classic (SPP) via flutter_bluetooth_serial,
-///              falls back to BLE if the device only supports LE.
-/// • iOS / macOS / Windows / Linux / Web → BLE only.
-///
-/// Bug fixes vs v1:
-///  • Memory leak: _inputSubscription was never cancelled on error path in connect()
-///  • Race condition: setState(connecting) was cleared before the async gap on error
-///  • Buffer overflow: unbounded _buffer string; now capped and cleared on disconnect
-///  • notifyListeners() called in dispose() → framework assertion; now guarded
-///  • Discovery subscription not cancelled before starting a new scan
-///  • No reconnection attempt on unexpected disconnect
 class BluetoothService extends ChangeNotifier {
   // ── Dependencies ──────────────────────────────────────────────────────────
   final EncryptionService _encryption;
@@ -60,15 +48,17 @@ class BluetoothService extends ChangeNotifier {
 
   // ── Shared state ──────────────────────────────────────────────────────────
   BtConnectionState _state = BtConnectionState.disconnected;
-  final List<BTDevice> _pairedDevices  = [];
-  final List<BTDevice> _discovered     = [];
-  final List<Message>  _messages       = [];
+  final List<BTDevice> _pairedDevices = [];
+  final List<BTDevice> _discovered = [];
+  final List<Message> _messages = [];
   String? _connectedDeviceName;
   String? _connectedDeviceAddress;
   String? _errorMessage;
-  bool _isDiscovering  = false;
-  bool _disposed       = false;
-  String _bleBuffer    = '';   // BLE packet reassembly buffer (capped at 64 KB)
+  bool _isDiscovering = false;
+  bool _disposed = false;
+
+  // IMPROVEMENT: Buffer raw bytes to prevent UTF-8 boundary corruption
+  final List<int> _byteBuffer = [];
 
   // ── Debounce / throttle ───────────────────────────────────────────────────
   final _discoverySubject = PublishSubject<BTDevice>();
@@ -87,17 +77,17 @@ class BluetoothService extends ChangeNotifier {
   }
 
   // ── Public getters ────────────────────────────────────────────────────────
-  BtConnectionState get state          => _state;
-  List<BTDevice>    get pairedDevices  => List.unmodifiable(_pairedDevices);
-  List<BTDevice>    get discovered     => List.unmodifiable(_discovered);
-  List<Message>     get messages       => List.unmodifiable(_messages);
-  String?           get connectedDeviceName    => _connectedDeviceName;
-  String?           get connectedDeviceAddress => _connectedDeviceAddress;
-  String?           get errorMessage   => _errorMessage;
-  bool              get isDiscovering  => _isDiscovering;
-  bool              get isConnected    => _state == BtConnectionState.connected;
+  BtConnectionState get state => _state;
+  List<BTDevice> get pairedDevices => List.unmodifiable(_pairedDevices);
+  List<BTDevice> get discovered => List.unmodifiable(_discovered);
+  List<Message> get messages => List.unmodifiable(_messages);
+  String? get connectedDeviceName => _connectedDeviceName;
+  String? get connectedDeviceAddress => _connectedDeviceAddress;
+  String? get errorMessage => _errorMessage;
+  bool get isDiscovering => _isDiscovering;
+  bool get isConnected => _state == BtConnectionState.connected;
   EncryptionService get encryptionService => _encryption;
-  String            get platformName   => AppPlatform.name;
+  String get platformName => AppPlatform.name;
 
   // ═════════════════════════════════════════════════════════════════════════
   // INITIALISATION
@@ -118,12 +108,16 @@ class BluetoothService extends ChangeNotifier {
   }
 
   Future<void> _checkBleAdapter() async {
-    final state = await fbp.FlutterBluePlus.adapterState.first;
-    if (state != fbp.BluetoothAdapterState.on) {
-      if (AppPlatform.isAndroid) {
-        await fbp.FlutterBluePlus.turnOn();
+    try {
+      final state = await fbp.FlutterBluePlus.adapterState.first;
+      if (state != fbp.BluetoothAdapterState.on) {
+        if (AppPlatform.isAndroid) {
+          await fbp.FlutterBluePlus.turnOn();
+        }
       }
-      // iOS/macOS/Windows: system will prompt the user automatically
+    } catch (_) {
+      // Handles platforms that report supportsBLE but lack actual hardware
+      debugPrint('[BT] BLE hardware not accessible or disabled.');
     }
   }
 
@@ -241,15 +235,12 @@ class BluetoothService extends ChangeNotifier {
         await _connectBLE(device);
       }
     } catch (e) {
-      // Ensure state is always reset on error (bug fix: was left in "connecting")
-      if (_state != BtConnectionState.connected) {
-        _setState(BtConnectionState.disconnected);
-      }
+      // IMPROVEMENT: Ensure ALL background connections are actually killed
+      await disconnect();
       _setError('Connection failed: $e');
     }
   }
 
-  // ── Classic connect (Android) ─────────────────────────────────────────────
   Future<void> _connectClassic(BTDevice device) async {
     await _classic!.connect(
       address: device.address,
@@ -262,19 +253,21 @@ class BluetoothService extends ChangeNotifier {
         }
       },
     );
-    _connectedDeviceName    = device.name;
+    _connectedDeviceName = device.name;
     _connectedDeviceAddress = device.address;
     _setState(BtConnectionState.connected);
   }
 
-  // ── BLE connect ───────────────────────────────────────────────────────────
   Future<void> _connectBLE(BTDevice device) async {
     final bleDevice = fbp.BluetoothDevice.fromId(device.address);
 
-    // Timeout guard — prevents hanging forever
     await bleDevice.connect(timeout: const Duration(seconds: 15));
 
-    // Monitor connection state for unexpected drops
+    // IMPROVEMENT: Explicitly request larger MTU on Android to prevent bottlenecks
+    if (AppPlatform.isAndroid) {
+      await bleDevice.requestMtu(512);
+    }
+
     _bleConnectionStateSubscription =
         bleDevice.connectionState.listen((s) async {
       if (s == fbp.BluetoothConnectionState.disconnected && isConnected) {
@@ -283,7 +276,6 @@ class BluetoothService extends ChangeNotifier {
       }
     });
 
-    // Discover services
     final services = await bleDevice.discoverServices();
     fbp.BluetoothCharacteristic? rx;
     fbp.BluetoothCharacteristic? tx;
@@ -298,7 +290,6 @@ class BluetoothService extends ChangeNotifier {
       }
     }
 
-    // Fallback: use first writable + first notifiable characteristics
     if (rx == null || tx == null) {
       for (final svc in services) {
         for (final c in svc.characteristics) {
@@ -309,21 +300,19 @@ class BluetoothService extends ChangeNotifier {
     }
 
     if (rx == null || tx == null) {
-      await bleDevice.disconnect();
       throw Exception('No suitable BLE characteristics found');
     }
 
-    // Enable notifications
     await tx.setNotifyValue(true);
     _bleNotifySubscription = tx.onValueReceived.listen(
       _onRawData,
       onError: (e) => _setError('BLE read error: $e'),
     );
 
-    _bleDevice  = bleDevice;
-    _bleRx      = rx;
-    _bleTx      = tx;
-    _connectedDeviceName    = device.name;
+    _bleDevice = bleDevice;
+    _bleRx = rx;
+    _bleTx = tx;
+    _connectedDeviceName = device.name;
     _connectedDeviceAddress = device.address;
     _setState(BtConnectionState.connected);
   }
@@ -333,20 +322,19 @@ class BluetoothService extends ChangeNotifier {
   // ═════════════════════════════════════════════════════════════════════════
 
   Future<void> disconnect() async {
-    // Cancel all subscriptions before closing connection (bug fix: leak)
     await _bleNotifySubscription?.cancel();
     await _bleConnectionStateSubscription?.cancel();
-    _bleNotifySubscription           = null;
-    _bleConnectionStateSubscription  = null;
+    _bleNotifySubscription = null;
+    _bleConnectionStateSubscription = null;
 
     await _classic?.disconnect();
     await _bleDevice?.disconnect();
 
-    _bleDevice   = null;
-    _bleRx       = null;
-    _bleTx       = null;
-    _bleBuffer   = '';        // clear buffer to avoid stale data on reconnect
-    _connectedDeviceName    = null;
+    _bleDevice = null;
+    _bleRx = null;
+    _bleTx = null;
+    _byteBuffer.clear(); // Clear byte buffer
+    _connectedDeviceName = null;
     _connectedDeviceAddress = null;
 
     if (_state != BtConnectionState.disconnected) {
@@ -361,19 +349,22 @@ class BluetoothService extends ChangeNotifier {
   Future<void> sendMessage(String text) async {
     if (!isConnected || text.trim().isEmpty) return;
 
-    final trimmed   = text.trim();
+    final trimmed = text.trim();
     final encrypted = _encryption.encrypt(trimmed);
-    final packet    = '${jsonEncode({'t': encrypted, 'v': '2'})}\n';
-    final bytes     = Uint8List.fromList(utf8.encode(packet));
+    final packet = '${jsonEncode({'t': encrypted, 'v': '2'})}\n';
+    final bytes = Uint8List.fromList(utf8.encode(packet));
 
     try {
       if (AppPlatform.supportsClassicBluetooth && _classic!.isConnected) {
         await _classic!.send(bytes);
       } else if (_bleRx != null) {
-        // BLE MTU is typically 20–512 bytes; chunk if needed
-        const mtu = 512;
-        for (var i = 0; i < bytes.length; i += mtu) {
-          final end = (i + mtu < bytes.length) ? i + mtu : bytes.length;
+        // IMPROVEMENT: Dynamic chunking based on currently negotiated MTU
+        // (Minus 3 bytes for BLE ATT Header)
+        int maxMtu = _bleDevice!.mtuNow - 3;
+        if (maxMtu < 20) maxMtu = 20; // safe fallback
+
+        for (var i = 0; i < bytes.length; i += maxMtu) {
+          final end = (i + maxMtu < bytes.length) ? i + maxMtu : bytes.length;
           await _bleRx!.write(
             bytes.sublist(i, end),
             withoutResponse: _bleRx!.properties.writeWithoutResponse,
@@ -400,30 +391,43 @@ class BluetoothService extends ChangeNotifier {
   // RECEIVE
   // ═════════════════════════════════════════════════════════════════════════
 
+  // IMPROVEMENT: Process raw bytes first, THEN decode to String
   void _onRawData(List<int> data) {
-    _bleBuffer += utf8.decode(data, allowMalformed: true);
+    _byteBuffer.addAll(data);
 
-    // Cap buffer size to prevent unbounded memory growth (bug fix)
-    if (_bleBuffer.length > 65536) {
+    // Hard cap size: 64KB
+    if (_byteBuffer.length > 65536) {
       debugPrint('[BT] Buffer overflow — discarding');
-      _bleBuffer = '';
+      _byteBuffer.clear();
       return;
     }
 
-    while (_bleBuffer.contains('\n')) {
-      final idx  = _bleBuffer.indexOf('\n');
-      final line = _bleBuffer.substring(0, idx).trim();
-      _bleBuffer = _bleBuffer.substring(idx + 1);
-      if (line.isEmpty) continue;
-      _parsePacket(line);
+    // Process all complete lines available in the buffer
+    while (true) {
+      final idx = _byteBuffer.indexOf(10); // 10 == '\n' in ASCII/UTF-8
+      if (idx == -1) break; // Wait for more data
+
+      final packetBytes = _byteBuffer.sublist(0, idx);
+      _byteBuffer.removeRange(0, idx + 1);
+
+      if (packetBytes.isEmpty) continue;
+
+      try {
+        final line = utf8.decode(packetBytes, allowMalformed: true).trim();
+        if (line.isNotEmpty) {
+          _parsePacket(line);
+        }
+      } catch (e) {
+        debugPrint('[BT] Decoding error: $e');
+      }
     }
   }
 
   void _parsePacket(String line) {
     try {
-      final json    = jsonDecode(line) as Map<String, dynamic>;
-      final cipher  = json['t'] as String? ?? '';
-      final plain   = _encryption.decrypt(cipher);
+      final json = jsonDecode(line) as Map<String, dynamic>;
+      final cipher = json['t'] as String? ?? '';
+      final plain = _encryption.decrypt(cipher);
 
       _messages.add(Message(
         id: _uuid.v4(),
@@ -479,7 +483,6 @@ class BluetoothService extends ChangeNotifier {
     _notify();
   }
 
-  /// Guard against calling notifyListeners() after dispose() (bug fix: assertion)
   void _notify() {
     if (!_disposed) notifyListeners();
   }

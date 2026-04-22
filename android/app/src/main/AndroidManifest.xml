@@ -1,27 +1,34 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"> <!-- Added tools namespace -->
 
-    <!-- Bluetooth Classic permissions -->
+    <!-- 1. Legacy Bluetooth permissions (Android 11 and below) -->
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
 
-    <!-- Android 12+ Bluetooth permissions -->
+    <!-- 2. Modern Bluetooth permissions (Android 12+) -->
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+    <uses-permission 
+        android:name="android.permission.BLUETOOTH_SCAN" 
+        android:usesPermissionFlags="neverForLocation" 
+        tools:targetApi="s" />
 
-    <!-- Location for Bluetooth discovery (required pre-Android 12) -->
+    <!-- 3. Location (Required for discovery on older Android versions) -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!-- Coarse is usually enough for BT, but plugins often demand Fine -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
-    <!-- Required features -->
+    <!-- 4. Required Hardware Features -->
     <uses-feature android:name="android.hardware.bluetooth" android:required="true" />
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
 
     <application
         android:label="BT SecureChat"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
-        android:usesCleartextTraffic="false">
+        android:usesCleartextTraffic="false"
+        android:extractNativeLibs="true"> <!-- Recommended for hardware plugins -->
 
         <activity
             android:name=".MainActivity"

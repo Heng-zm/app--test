@@ -15,12 +15,13 @@ class PermissionHelper {
 
     if (AppPlatform.isAndroid) {
       // Android 12+ (API 31+) uses new granular BT permissions.
-      // permission_handler resolves the API level internally.
+      // permission_handler resolves the API level internally, so on API < 31,
+      // requesting bluetoothScan will automatically ask for location instead.
       required.addAll([
         Permission.bluetoothScan,
         Permission.bluetoothConnect,
         Permission.bluetoothAdvertise,
-        Permission.location, // still needed for Classic BT discovery on API < 31
+        Permission.location,
       ]);
     } else if (AppPlatform.isIOS) {
       // iOS only needs bluetooth; location is NOT required for BLE on iOS 13+.
@@ -31,24 +32,34 @@ class PermissionHelper {
 
     final statuses = await required.request();
 
-    // Check that every requested permission is granted or limited
+    // Debug logging for denied permissions
     for (final entry in statuses.entries) {
       if (!entry.value.isGranted && !entry.value.isLimited) {
-        debugPrint('[Permissions] Denied: ${entry.key} → ${entry.value}');
-        // Non-fatal — continue; the service will surface its own error
+        debugPrint(
+            '[Permissions] Denied/Restricted: ${entry.key} → ${entry.value}');
       }
     }
 
-    // Bluetooth connect + scan are the hard requirements
-    final btConnect = statuses[Permission.bluetoothConnect];
-    final btScan = statuses[Permission.bluetoothScan];
-    final bt = statuses[Permission.bluetooth];
+    // ── Platform-specific evaluation ────────────────────────────────────────
 
     if (AppPlatform.isAndroid) {
-      return (btConnect?.isGranted ?? false) && (btScan?.isGranted ?? false);
+      // Helper to check if a permission is functional (granted or limited)
+      bool isGood(Permission p) {
+        final status = statuses[p];
+        return status != null && (status.isGranted || status.isLimited);
+      }
+
+      // We ensure scan, connect, and advertise are all functional.
+      // (We don't strictly enforce Location here, because on Android 12+
+      // location is often not needed if 'neverForLocation' is in the manifest).
+      return isGood(Permission.bluetoothScan) &&
+          isGood(Permission.bluetoothConnect) &&
+          isGood(Permission.bluetoothAdvertise);
     } else if (AppPlatform.isIOS) {
-      return bt?.isGranted ?? false;
+      final status = statuses[Permission.bluetooth];
+      return status != null && (status.isGranted || status.isLimited);
     }
+
     return true;
   }
 
