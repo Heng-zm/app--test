@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Bluetooth access (required for flutter_blue_plus on macOS) -->
+    <key>com.apple.security.device.bluetooth</key>
+    <true/>
+
+    <!-- App Sandbox — required for Mac App Store distribution -->
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+
+    <!-- Network client — needed if you ever add relay/pairing features -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+</dict>
+</plist>

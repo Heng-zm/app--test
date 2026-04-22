@@ -1,0 +1,242 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+
+    <!-- ═══════════════════════════════════════════
+         BUNDLE IDENTITY
+    ═══════════════════════════════════════════ -->
+    <key>CFBundleDevelopmentRegion</key>
+    <string>$(DEVELOPMENT_LANGUAGE)</string>
+
+    <key>CFBundleDisplayName</key>
+    <string>BT SecureChat</string>
+
+    <key>CFBundleName</key>
+    <string>bluetooth_chat</string>
+
+    <key>CFBundleIdentifier</key>
+    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+
+    <key>CFBundleExecutable</key>
+    <string>$(EXECUTABLE_NAME)</string>
+
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+
+    <key>CFBundleSignature</key>
+    <string>????</string>
+
+    <!-- Version and Build — injected by the Flutter build system -->
+    <key>CFBundleShortVersionString</key>
+    <string>$(FLUTTER_BUILD_NAME)</string>
+
+    <key>CFBundleVersion</key>
+    <string>$(FLUTTER_BUILD_NUMBER)</string>
+
+    <!-- ═══════════════════════════════════════════
+         APP ICONS
+    ═══════════════════════════════════════════ -->
+    <key>CFBundleIcons</key>
+    <dict>
+        <key>CFBundlePrimaryIcon</key>
+        <dict>
+            <key>CFBundleIconFiles</key>
+            <array>
+                <string>AppIcon</string>
+            </array>
+            <key>UIPrerenderedIcon</key>
+            <false/>
+        </dict>
+    </dict>
+
+    <key>CFBundleIcons~ipad</key>
+    <dict>
+        <key>CFBundlePrimaryIcon</key>
+        <dict>
+            <key>CFBundleIconFiles</key>
+            <array>
+                <string>AppIcon</string>
+            </array>
+            <key>UIPrerenderedIcon</key>
+            <false/>
+        </dict>
+    </dict>
+
+    <key>UILaunchStoryboardName</key>
+    <string>LaunchScreen</string>
+
+    <!-- ═══════════════════════════════════════════
+         PLATFORM REQUIREMENTS
+    ═══════════════════════════════════════════ -->
+    <key>LSRequiresIPhoneOS</key>
+    <true/>
+
+    <!-- Minimum iOS enforced here and in Podfile / Xcode project -->
+    <key>MinimumOSVersion</key>
+    <string>13.0</string>
+
+    <!-- Capabilities required on the device -->
+    <key>UIRequiredDeviceCapabilities</key>
+    <array>
+        <string>armv7</string>
+        <string>bluetooth-le</string>
+    </array>
+
+    <!-- ═══════════════════════════════════════════
+         BLUETOOTH PERMISSIONS
+         Both keys must be present:
+           • NSBluetoothPeripheralUsageDescription  →  iOS 12 and below
+           • NSBluetoothAlwaysUsageDescription      →  iOS 13+
+         Apple rejects apps that include only one of them.
+    ═══════════════════════════════════════════ -->
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>BT SecureChat uses Bluetooth to discover and connect to nearby devices so you can send AES-256 encrypted messages without an internet connection.</string>
+
+    <key>NSBluetoothPeripheralUsageDescription</key>
+    <string>BT SecureChat needs Bluetooth access to pair and communicate with nearby devices for secure offline messaging.</string>
+
+    <!-- ═══════════════════════════════════════════
+         LOCATION PERMISSIONS
+         Core Location is required by iOS when scanning
+         for Bluetooth Classic (BR/EDR) devices on iOS ≤ 14.
+         On iOS 15+ with BLE-only you may omit location keys
+         and use CBCentralManagerOptionShowPowerAlertKey.
+    ═══════════════════════════════════════════ -->
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>iOS requires location access to scan for nearby Bluetooth devices. BT SecureChat never stores or shares your location.</string>
+
+    <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+    <string>Background location access lets BT SecureChat maintain Bluetooth scanning when the app is minimised. Your location is never stored or uploaded.</string>
+
+    <!-- Request reduced accuracy — we only need BT proximity -->
+    <key>NSLocationDefaultAccuracyReduced</key>
+    <true/>
+
+    <!-- ═══════════════════════════════════════════
+         LOCAL NETWORK
+         Needed when BLE advertisements interact with
+         Bonjour / mDNS service discovery. Remove this
+         block if your app uses raw BLE only.
+    ═══════════════════════════════════════════ -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>BT SecureChat uses the local network to detect Bluetooth service advertisements from nearby devices.</string>
+
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_bt-securechat._tcp</string>
+    </array>
+
+    <!-- ═══════════════════════════════════════════
+         BACKGROUND MODES
+           bluetooth-central    — scan and receive data while
+                                  the app is in the background
+           bluetooth-peripheral — advertise this device while
+                                  in the background (remove if
+                                  you never act as a peripheral)
+    ═══════════════════════════════════════════ -->
+    <key>UIBackgroundModes</key>
+    <array>
+        <string>bluetooth-central</string>
+        <string>bluetooth-peripheral</string>
+    </array>
+
+    <!-- ═══════════════════════════════════════════
+         UI APPEARANCE
+    ═══════════════════════════════════════════ -->
+
+    <!-- Light status-bar icons (white) to match the dark theme -->
+    <key>UIStatusBarStyle</key>
+    <string>UIStatusBarStyleLightContent</string>
+
+    <!-- Prevent view controllers from overriding the style above -->
+    <key>UIViewControllerBasedStatusBarAppearance</key>
+    <false/>
+
+    <!-- Status bar is always visible -->
+    <key>UIStatusBarHidden</key>
+    <false/>
+
+    <!-- Honour the system Dark / Light preference; Flutter handles rendering -->
+    <key>UIUserInterfaceStyle</key>
+    <string>Automatic</string>
+
+    <!-- ═══════════════════════════════════════════
+         SUPPORTED ORIENTATIONS — iPhone
+    ═══════════════════════════════════════════ -->
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationPortraitUpsideDown</string>
+    </array>
+
+    <!-- ═══════════════════════════════════════════
+         SUPPORTED ORIENTATIONS — iPad
+    ═══════════════════════════════════════════ -->
+    <key>UISupportedInterfaceOrientations~ipad</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationPortraitUpsideDown</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+
+    <!-- ═══════════════════════════════════════════
+         FLUTTER ENGINE
+    ═══════════════════════════════════════════ -->
+
+    <!-- Enable the Impeller rendering engine (iOS 14+, recommended) -->
+    <key>FLTEnableImpeller</key>
+    <true/>
+
+    <!-- ═══════════════════════════════════════════
+         APP TRANSPORT SECURITY
+         This app is fully offline (Bluetooth only).
+         Explicitly block all HTTP so no accidental
+         cleartext request slips through in production.
+         Remove this block entirely if you add web APIs.
+    ═══════════════════════════════════════════ -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoads</key>
+        <false/>
+    </dict>
+
+    <!-- ═══════════════════════════════════════════
+         PRIVACY MANIFEST (iOS 17+ / App Store Spring 2024)
+         Required API usage is declared in
+         ios/Runner/PrivacyInfo.xcprivacy — see below.
+         Keys here are informational only.
+    ═══════════════════════════════════════════ -->
+    <!-- APIs used: none from the "required reason" list.
+         Bluetooth & Location are declared via NS* keys above. -->
+
+    <!-- ═══════════════════════════════════════════
+         ACCESSIBILITY
+    ═══════════════════════════════════════════ -->
+
+    <!-- Do not auto-request software keyboard from accessibility tools -->
+    <key>UIAccessibilityRequestsKeyboard</key>
+    <false/>
+
+    <!-- ═══════════════════════════════════════════
+         SPOTLIGHT / SIRI
+    ═══════════════════════════════════════════ -->
+
+    <!-- Spoken name used by Siri and VoiceOver -->
+    <key>CFBundleSpokenName</key>
+    <string>BT Secure Chat</string>
+
+    <!-- ═══════════════════════════════════════════
+         MISCELLANEOUS
+    ═══════════════════════════════════════════ -->
+
+    <!-- Suppress auto-correct when typing device names/passphrases -->
+    <key>UITextInputContextIdentifiers</key>
+    <array/>
+
+</dict>
+</plist>

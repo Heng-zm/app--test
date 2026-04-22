@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  runner.exe.manifest
+  Declares the Bluetooth device capability required for flutter_blue_plus
+  to access Bluetooth LE on Windows 10+.
+
+  Place at: windows/runner/runner.exe.manifest
+-->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1"
+          xmlns:asmv3="urn:schemas-microsoft-com:asm.v3"
+          manifestVersion="1.0">
+
+  <assemblyIdentity
+    version="1.0.0.0"
+    processorArchitecture="*"
+    name="bluetooth_chat"
+    type="win32"/>
+
+  <description>BT SecureChat — Encrypted Bluetooth Messenger</description>
+
+  <!-- Request DPI awareness (sharp text on high-DPI displays) -->
+  <asmv3:application>
+    <asmv3:windowsSettings>
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">
+        true/PM
+      </dpiAware>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">
+        PerMonitorV2, PerMonitor
+      </dpiAwareness>
+    </asmv3:windowsSettings>
+  </asmv3:application>
+
+  <!-- Bluetooth device capability — required for Windows BLE access -->
+  <asmv3:application>
+    <asmv3:windowsCapabilities>
+      <asmv3:capability Name="bluetooth"/>
+      <asmv3:DeviceCapability Name="bluetooth.genericAttributeProfile"/>
+      <asmv3:DeviceCapability Name="bluetooth.rfcomm"/>
+    </asmv3:windowsCapabilities>
+  </asmv3:application>
+
+  <!-- UAC: run as invoker (no elevation needed) -->
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level="asInvoker" uiAccess="false"/>
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+
+  <!-- Use the latest IE/Edge compatibility mode -->
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <!-- Windows 10 and above -->
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
+      <!-- Windows 11 -->
+      <supportedOS Id="{1f676c76-80e1-4239-95bb-83d0f6d0da78}"/>
+    </application>
+  </compatibility>
+
+</assembly>

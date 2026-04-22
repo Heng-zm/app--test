@@ -1,0 +1,39 @@
+# linux/snapcraft.yaml
+# Bluetooth support on Linux via bluez snap plug.
+# Used when distributing via Snap Store; for .deb / Flatpak see README.
+
+name: bt-securechat
+base: core22
+version: '1.1.0'
+summary: Encrypted Bluetooth Chat
+description: |
+  BT SecureChat lets you send AES-256-CBC encrypted messages over Bluetooth
+  without an internet connection. Supports BLE on Linux via BlueZ.
+
+grade: stable
+confinement: strict
+
+apps:
+  bt-securechat:
+    command: bt_securechat
+    extensions: [gnome]
+    plugs:
+      - bluetooth-control   # scan + connect
+      - bluez               # BlueZ D-Bus access
+      - network             # optional; remove if fully offline
+      - desktop
+      - desktop-legacy
+      - wayland
+      - x11
+      - opengl
+
+parts:
+  bt-securechat:
+    plugin: flutter
+    source: .
+    flutter-target: lib/main.dart
+    build-packages:
+      - libbluetooth-dev
+    stage-packages:
+      - bluez
+      - libbluetooth3
