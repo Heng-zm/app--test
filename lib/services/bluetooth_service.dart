@@ -1,9 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart' as fbp;
 import 'package:rxdart/rxdart.dart';
 import 'package:uuid/uuid.dart';
+import 'package:permission_handler/permission_handler.dart';
+
 import '../platform/app_platform.dart';
 import 'encryption_service.dart';
 import '../models/message_model.dart';
@@ -35,8 +40,10 @@ class BluetoothService extends ChangeNotifier {
   final List<BTDevice> _pairedDevices = [];
   final List<BTDevice> _discovered = [];
   final List<Message> _messages = [];
+
   String? _connectedDeviceName;
   String? _errorMessage;
+
   bool _isDiscovering = false;
   bool _disposed = false;
 
@@ -49,18 +56,17 @@ class BluetoothService extends ChangeNotifier {
     if (AppPlatform.supportsClassicBluetooth) {
       _classic = ClassicBluetoothHelper();
     }
-    // Optimization: Batch UI updates to 250ms intervals
+
     _discoverySub = _discoverySubject
         .throttleTime(const Duration(milliseconds: 250))
         .listen(_addOrUpdateDiscovered);
   }
 
-  // ── Public Getters ────────────────────────────────────────────────────────
+  // ── Getters ─────────────────────────────────────────────
 
   BtConnectionState get state => _state;
   List<BTDevice> get pairedDevices => List.unmodifiable(_pairedDevices);
 
-  /// Returns discovered devices sorted by strongest signal strength (RSSI)
   List<BTDevice> get discovered {
     final list = List<BTDevice>.from(_discovered);
     list.sort((a, b) => (b.rssi ?? -100).compareTo(a.rssi ?? -100));
@@ -73,10 +79,17 @@ class BluetoothService extends ChangeNotifier {
   String? get connectedDeviceName => _connectedDeviceName;
   String? get errorMessage => _errorMessage;
 
-  // ── Initialization ─────────────────────────────────────────────────────────
+  // ── Initialization ──────────────────────────────────────
 
   Future<void> initialize() async {
     try {
+      // ✅ FIX: Only request permissions on Android/iOS
+      if (Platform.isAndroid || Platform.isIOS) {
+        await Permission.bluetooth.request();
+        await Permission.bluetoothScan.request();
+        await Permission.bluetoothConnect.request();
+      }
+
       if (AppPlatform.supportsClassicBluetooth) {
         await _classic!.ensureEnabled();
         final pairs = await _classic!.getBondedDevices();
@@ -84,25 +97,29 @@ class BluetoothService extends ChangeNotifier {
           ..clear()
           ..addAll(pairs);
       }
+
       if (AppPlatform.supportsBLE) {
         final adapterState = await fbp.FlutterBluePlus.adapterState.first;
+
         if (adapterState != fbp.BluetoothAdapterState.on &&
             AppPlatform.isAndroid) {
           await fbp.FlutterBluePlus.turnOn();
         }
       }
+
       _notify();
     } catch (e) {
       _setError('Initialization failed: $e');
     }
   }
 
-  // ── Discovery ──────────────────────────────────────────────────────────────
+  // ── Discovery ───────────────────────────────────────────
 
   Future<void> startDiscovery() async {
     if (_isDiscovering) {
       await stopDiscovery();
     }
+
     _discovered.clear();
     _isDiscovering = true;
     _setState(BtConnectionState.scanning);
@@ -160,11 +177,14 @@ class BluetoothService extends ChangeNotifier {
     if (AppPlatform.supportsClassicBluetooth) {
       await _classic!.cancelDiscovery();
     }
+
     await _bleScanSub?.cancel();
     _bleScanSub = null;
+
     if (fbp.FlutterBluePlus.isScanningNow) {
       await fbp.FlutterBluePlus.stopScan();
     }
+
     _stopScanUI();
   }
 
@@ -178,24 +198,25 @@ class BluetoothService extends ChangeNotifier {
     _notify();
   }
 
-  // ── Connection Logic ──────────────────────────────────────────────────────
+  // ── Connection ──────────────────────────────────────────
 
   Future<void> connectToDevice(BTDevice device) async {
-    if (_state == BtConnectionState.connecting) {
-      return;
-    }
+    if (_state == BtConnectionState.connecting) return;
+
     await stopDiscovery();
     await disconnect();
+
     _setState(BtConnectionState.connecting);
     _messages.clear();
 
     try {
       if (!device.isBLE && AppPlatform.supportsClassicBluetooth) {
         await _classic!.connect(
-            address: device.address,
-            onData: _onRawData,
-            onDone: disconnect,
-            onError: (e) => _setError('Classic link lost: $e'));
+          address: device.address,
+          onData: _onRawData,
+          onDone: disconnect,
+          onError: (e) => _setError('Classic link lost: $e'),
+        );
       } else {
         _bleDevice = fbp.BluetoothDevice.fromId(device.address);
         await _bleDevice!.connect(timeout: const Duration(seconds: 15));
@@ -211,9 +232,9 @@ class BluetoothService extends ChangeNotifier {
           }
         });
 
-        // Robust Service Discovery (handles Android discovery lag)
         List<fbp.BluetoothService> services = [];
         int retry = 0;
+
         while (services.isEmpty && retry < 3) {
           services = await _bleDevice!.discoverServices();
           if (services.isEmpty) {
@@ -228,17 +249,12 @@ class BluetoothService extends ChangeNotifier {
         for (var s in services) {
           if (s.uuid.toString().toUpperCase() == _kServiceUuid) {
             for (var c in s.characteristics) {
-              if (c.uuid.toString().toUpperCase() == _kRxUuid) {
-                rx = c;
-              }
-              if (c.uuid.toString().toUpperCase() == _kTxUuid) {
-                tx = c;
-              }
+              if (c.uuid.toString().toUpperCase() == _kRxUuid) rx = c;
+              if (c.uuid.toString().toUpperCase() == _kTxUuid) tx = c;
             }
           }
         }
 
-        // Generic fallback if hardware uses different UUIDs
         if (rx == null || tx == null) {
           for (var s in services) {
             for (var c in s.characteristics) {
@@ -254,8 +270,7 @@ class BluetoothService extends ChangeNotifier {
         }
 
         if (rx == null || tx == null) {
-          throw Exception(
-              'Target node does not support secure messaging protocols.');
+          throw Exception('Device does not support messaging.');
         }
 
         await tx.setNotifyValue(true);
@@ -267,26 +282,29 @@ class BluetoothService extends ChangeNotifier {
       _setState(BtConnectionState.connected);
     } catch (e) {
       await disconnect();
-      _setError('Uplink failed: $e');
+      _setError('Connection failed: $e');
     }
   }
 
-  // ── Secure Communication ──────────────────────────────────────────────────
+  // ── Messaging ───────────────────────────────────────────
 
   void _onRawData(List<int> data) {
     _byteBuffer.addAll(data);
+
     while (_byteBuffer.contains(10)) {
-      // 10 is '\n' delimiter
       final idx = _byteBuffer.indexOf(10);
+
       try {
         final line = utf8
             .decode(_byteBuffer.sublist(0, idx), allowMalformed: true)
             .trim();
+
         _byteBuffer.removeRange(0, idx + 1);
+
         if (line.isNotEmpty) {
           _parsePacket(line);
         }
-      } catch (e) {
+      } catch (_) {
         _byteBuffer.removeRange(0, idx + 1);
       }
     }
@@ -299,84 +317,71 @@ class BluetoothService extends ChangeNotifier {
       final plain = _encryption.decrypt(cipher);
 
       _messages.add(Message(
-          id: _uuid.v4(),
-          text: plain,
-          encryptedText: cipher,
-          isMine: false,
-          timestamp: DateTime.now()));
+        id: _uuid.v4(),
+        text: plain,
+        encryptedText: cipher,
+        isMine: false,
+        timestamp: DateTime.now(),
+      ));
     } catch (_) {
       _messages.add(Message(
-          id: _uuid.v4(),
-          text: 'Decryption Error: $line',
-          encryptedText: line,
-          isMine: false,
-          timestamp: DateTime.now(),
-          isDecryptionError: true));
+        id: _uuid.v4(),
+        text: 'Decryption Error: $line',
+        encryptedText: line,
+        isMine: false,
+        timestamp: DateTime.now(),
+        isDecryptionError: true,
+      ));
     }
+
     _notify();
   }
 
   Future<void> sendMessage(String text) async {
-    if (!isConnected || text.trim().isEmpty) {
-      return;
-    }
+    if (!isConnected || text.trim().isEmpty) return;
+
     final trimmed = text.trim();
     final encText = _encryption.encrypt(trimmed);
-    final packet = utf8.encode('${jsonEncode({'t': encText, 'v': '2'})}\n');
+    final packet = utf8.encode('${jsonEncode({'t': encText})}\n');
 
     try {
       if (_classic != null && _classic!.isConnected) {
         await _classic!.send(Uint8List.fromList(packet));
       } else if (_bleRx != null) {
         int mtu = (_bleDevice?.mtuNow ?? 23) - 3;
-        if (mtu < 20) {
-          mtu = 20;
-        }
+        if (mtu < 20) mtu = 20;
 
         for (var i = 0; i < packet.length; i += mtu) {
           final end = (i + mtu < packet.length) ? i + mtu : packet.length;
-          await _bleRx!.write(packet.sublist(i, end), withoutResponse: true);
+          await _bleRx!.write(packet.sublist(i, end),
+              withoutResponse: true);
         }
       }
 
       _messages.add(Message(
-          id: _uuid.v4(),
-          text: trimmed,
-          encryptedText: encText,
-          isMine: true,
-          timestamp: DateTime.now()));
+        id: _uuid.v4(),
+        text: trimmed,
+        encryptedText: encText,
+        isMine: true,
+        timestamp: DateTime.now(),
+      ));
+
       _notify();
     } catch (e) {
-      _setError('Transmission failure: $e');
+      _setError('Send failed: $e');
     }
   }
 
-  // ── Helpers & Lifecycle ───────────────────────────────────────────────────
-
-  void clearMessages() {
-    _messages.clear();
-    _notify();
-  }
-
-  void clearError() {
-    _errorMessage = null;
-    if (_state == BtConnectionState.error) {
-      _state = BtConnectionState.disconnected;
-    }
-    _notify();
-  }
-
-  void updatePassphrase(String p) => _encryption.updatePassphrase(p);
+  // ── Lifecycle ───────────────────────────────────────────
 
   Future<void> disconnect() async {
     await _bleNotifySub?.cancel();
     await _bleStateSub?.cancel();
-    _bleNotifySub = null;
-    _bleStateSub = null;
 
     if (_bleDevice != null) {
       await _bleDevice!.disconnect();
     }
+
     if (_classic != null) {
       await _classic!.disconnect();
     }
@@ -385,6 +390,7 @@ class BluetoothService extends ChangeNotifier {
     _bleRx = null;
     _byteBuffer.clear();
     _connectedDeviceName = null;
+
     _setState(BtConnectionState.disconnected);
   }
 
@@ -401,9 +407,7 @@ class BluetoothService extends ChangeNotifier {
   }
 
   void _notify() {
-    if (!_disposed) {
-      notifyListeners();
-    }
+    if (!_disposed) notifyListeners();
   }
 
   @override
