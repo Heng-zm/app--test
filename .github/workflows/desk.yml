@@ -1,0 +1,201 @@
+name: Windows-exe-build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: 🪟 Windows Release Build
+    runs-on: windows-latest
+
+    steps:
+      # ──────────────────────────────────────────────────────────────────
+      # 1. Checkout
+      # ──────────────────────────────────────────────────────────────────
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+
+      # ──────────────────────────────────────────────────────────────────
+      # 2. Flutter — same version as iOS workflow (3.27.4)
+      #    Required for Color.withValues() support
+      # ──────────────────────────────────────────────────────────────────
+      - name: 🛠️ Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.27.4'
+          channel: 'stable'
+          cache: true
+
+      # ──────────────────────────────────────────────────────────────────
+      # 3. Enable Windows desktop target
+      # ──────────────────────────────────────────────────────────────────
+      - name: 🖥️ Enable Flutter Windows desktop
+        run: flutter config --enable-windows-desktop
+
+      # ──────────────────────────────────────────────────────────────────
+      # 4. Install pub dependencies
+      # ──────────────────────────────────────────────────────────────────
+      - name: 📦 Install pub dependencies
+        run: flutter pub get
+
+      # ──────────────────────────────────────────────────────────────────
+      # 5. Generate Hive adapters (hive_generator in your pubspec.yaml)
+      # ──────────────────────────────────────────────────────────────────
+      - name: ⚙️ Run build_runner (Hive code generation)
+        run: flutter pub run build_runner build --delete-conflicting-outputs
+
+      # ──────────────────────────────────────────────────────────────────
+      # 6. Build Windows release
+      #    Output lands in: build\windows\x64\runner\Release\
+      # ──────────────────────────────────────────────────────────────────
+      - name: 🏗️ Build Windows app
+        run: |
+          flutter build windows --release `
+            --build-number=${{ github.run_number }} `
+            --build-name=1.1.${{ github.run_number }}
+
+      # ──────────────────────────────────────────────────────────────────
+      # 7. Install NSIS for installer creation
+      #    NSIS produces a standard Windows setup .exe (no code signing
+      #    required, works as a portable installer)
+      # ──────────────────────────────────────────────────────────────────
+      - name: 📥 Install NSIS
+        run: choco install nsis --yes
+
+      # ──────────────────────────────────────────────────────────────────
+      # 8. Write the NSIS installer script
+      #    Creates a professional setup wizard that:
+      #      - Installs to Program Files\BT SecureChat
+      #      - Creates a Start Menu shortcut
+      #      - Creates a Desktop shortcut
+      #      - Includes an uninstaller
+      # ──────────────────────────────────────────────────────────────────
+      - name: 📝 Generate NSIS installer script
+        shell: pwsh
+        run: |
+          $version = "1.1.${{ github.run_number }}"
+          $script = @"
+          Unicode true
+          !define APP_NAME      "BT SecureChat"
+          !define APP_VERSION   "$version"
+          !define APP_EXE       "bluetooth_chat.exe"
+          !define INSTALL_DIR   "`$PROGRAMFILES64\BT SecureChat"
+          !define UNINSTALLER   "Uninstall.exe"
+          !define BUILD_DIR     "build\windows\x64\runner\Release"
+
+          Name            "`${APP_NAME} `${APP_VERSION}"
+          OutFile         "BT-SecureChat-Setup-v$version.exe"
+          InstallDir      "`${INSTALL_DIR}"
+          InstallDirRegKey HKLM "Software\BT SecureChat" "Install_Dir"
+          RequestExecutionLevel admin
+          SetCompressor    lzma
+
+          Page directory
+          Page instfiles
+
+          Section "Install"
+            SetOutPath "`$INSTDIR"
+
+            ; Copy entire Release folder contents (app + all DLLs + data/)
+            File /r "`${BUILD_DIR}\*.*"
+
+            ; Write uninstaller
+            WriteUninstaller "`$INSTDIR\`${UNINSTALLER}"
+
+            ; Start Menu shortcut
+            CreateDirectory "`$SMPROGRAMS\BT SecureChat"
+            CreateShortcut  "`$SMPROGRAMS\BT SecureChat\BT SecureChat.lnk" "`$INSTDIR\`${APP_EXE}"
+            CreateShortcut  "`$SMPROGRAMS\BT SecureChat\Uninstall.lnk"     "`$INSTDIR\`${UNINSTALLER}"
+
+            ; Desktop shortcut
+            CreateShortcut "`$DESKTOP\BT SecureChat.lnk" "`$INSTDIR\`${APP_EXE}"
+
+            ; Add/Remove Programs registry entry
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\BT SecureChat" \
+              "DisplayName"    "BT SecureChat"
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\BT SecureChat" \
+              "UninstallString" "`$INSTDIR\`${UNINSTALLER}"
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\BT SecureChat" \
+              "DisplayVersion" "`${APP_VERSION}"
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\BT SecureChat" \
+              "Publisher"      "BT SecureChat"
+          SectionEnd
+
+          Section "Uninstall"
+            RMDir /r "`$INSTDIR"
+            Delete "`$SMPROGRAMS\BT SecureChat\BT SecureChat.lnk"
+            Delete "`$SMPROGRAMS\BT SecureChat\Uninstall.lnk"
+            RMDir  "`$SMPROGRAMS\BT SecureChat"
+            Delete "`$DESKTOP\BT SecureChat.lnk"
+            DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\BT SecureChat"
+            DeleteRegKey HKLM "Software\BT SecureChat"
+          SectionEnd
+          "@
+
+          $script | Out-File -FilePath "installer.nsi" -Encoding UTF8
+          Write-Host "✅ NSIS script written."
+
+      # ──────────────────────────────────────────────────────────────────
+      # 9. Compile the NSIS installer → produces Setup .exe
+      # ──────────────────────────────────────────────────────────────────
+      - name: 🔨 Compile NSIS installer
+        run: makensis installer.nsi
+
+      # ──────────────────────────────────────────────────────────────────
+      # 10. Also zip the portable build (no install required)
+      #     Some users prefer to just unzip and run
+      # ──────────────────────────────────────────────────────────────────
+      - name: 📦 Package portable ZIP
+        shell: pwsh
+        run: |
+          $version = "1.1.${{ github.run_number }}"
+          $src  = "build\windows\x64\runner\Release"
+          $dest = "BT-SecureChat-Portable-v$version.zip"
+          Compress-Archive -Path "$src\*" -DestinationPath $dest
+          Write-Host "✅ Portable ZIP: $dest ($('{0:N2}' -f ((Get-Item $dest).Length / 1MB)) MB)"
+
+      # ──────────────────────────────────────────────────────────────────
+      # 11. Upload Setup installer to GitHub Releases
+      # ──────────────────────────────────────────────────────────────────
+      - name: 🚀 Upload Setup EXE to GitHub Releases
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: BT-SecureChat-Setup-v1.1.${{ github.run_number }}.exe
+          asset_name: BT-SecureChat-Setup-v1.1.${{ github.run_number }}.exe
+          tag: v1.1.${{ github.run_number }}
+          overwrite: true
+          body: |
+            ## 🔒 BT SecureChat — v1.1.${{ github.run_number }}
+
+            | Field | Value |
+            |---|---|
+            | Platform | Windows x64 |
+            | Flutter | 3.27.4 |
+            | Encryption | AES-256 |
+            | Build | ${{ github.run_number }} |
+
+            ### Downloads
+            | File | Description |
+            |---|---|
+            | `BT-SecureChat-Setup-*.exe` | Standard installer (recommended) |
+            | `BT-SecureChat-Portable-*.zip` | Portable — unzip and run, no install needed |
+
+            ### Requirements
+            - Windows 10 / 11 (x64)
+            - No additional runtime required
+
+      # ──────────────────────────────────────────────────────────────────
+      # 12. Upload Portable ZIP to GitHub Releases
+      # ──────────────────────────────────────────────────────────────────
+      - name: 🚀 Upload Portable ZIP to GitHub Releases
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: BT-SecureChat-Portable-v1.1.${{ github.run_number }}.zip
+          asset_name: BT-SecureChat-Portable-v1.1.${{ github.run_number }}.zip
+          tag: v1.1.${{ github.run_number }}
+          overwrite: true
