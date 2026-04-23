@@ -1,22 +1,26 @@
 name: Windows-exe-build
+
 on:
   workflow_dispatch:
+
 permissions:
   contents: write
+
 jobs:
   build-windows:
     name: 🪟 Windows Release Build
     runs-on: windows-latest
+
     steps:
+      # 1. Checkout
       - name: 📥 Checkout repository
         uses: actions/checkout@v4
 
-      - name: 🔗 Enable Symlinks & Developer Mode
-        shell: pwsh
-        run: |
-          git config --global core.symlinks true
-          reg add "HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock" /v "AllowDevelopmentWithoutDevLicense" /t REG_DWORD /d 1 /f
+      # 2. Enable symlinks (important for Flutter plugins)
+      - name: 🔗 Enable Symlinks
+        run: git config --global core.symlinks true
 
+      # 3. Setup Flutter
       - name: 🛠️ Setup Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -24,113 +28,78 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: 🏗️ Prepare, Patch & Build
-        shell: pwsh
+      # 4. Enable Windows + get dependencies
+      - name: 📦 Install dependencies
         run: |
-          $ErrorActionPreference = "Stop"
-
-          # 1. Enable Windows desktop & scaffold platform files
           flutter config --enable-windows-desktop
-          flutter create --platforms=windows .
-
-          # 2. Fetch dependencies AFTER create so plugin symlinks are resolved correctly
+          flutter clean
           flutter pub get
 
-          # 3. Run build_runner
-          flutter pub run build_runner build --delete-conflicting-outputs
+      # 5. Run build_runner
+      - name: ⚙️ Code generation
+        run: flutter pub run build_runner build --delete-conflicting-outputs
 
-          # 4. Patch CMakeLists.txt (Binary Name & App ID)
-          $cmakeMain = "windows\runner\CMakeLists.txt"
-          (Get-Content $cmakeMain) `
-            -replace 'set\(BINARY_NAME "[^"]*"\)',    'set(BINARY_NAME "bluetooth_chat")' `
-            -replace 'set\(APPLICATION_ID "[^"]*"\)', 'set(APPLICATION_ID "com.kimheng.btsecurechat")' |
-          Set-Content $cmakeMain
+      # 6. Build Windows app
+      - name: 🏗️ Build Windows
+        run: flutter build windows --release
 
-          # 5. KEY FIX: Remove permission_handler_windows from the generated CMake plugin list.
-          #
-          #    WHY: permission_handler_windows has NO Windows implementation in the version
-          #    your pubspec.yaml pins (11.x). Flutter's tooling generates a symlink pointer
-          #    for it, but the symlink target (the actual windows/ directory) doesn't exist
-          #    on disk. PowerShell's Test-Path sees the symlink and reports true, but CMake
-          #    follows the symlink and correctly reports the directory is missing.
-          #
-          #    FIX OPTIONS (pick one long-term):
-          #      A) Remove permission_handler from pubspec.yaml if you don't need it on Windows
-          #      B) Add a platform guard in your Dart code: `if (!Platform.isWindows) ...`
-          #         and keep this CMake patch to skip the broken plugin registration.
-          #
-          $generatedPlugins = "windows\flutter\generated_plugins.cmake"
-          if (Test-Path $generatedPlugins) {
-            $original = Get-Content $generatedPlugins -Raw
-            # Remove every line that references permission_handler_windows
-            $patched = ($original -split "`r?`n" |
-              Where-Object { $_ -notmatch 'permission_handler_windows' }) -join "`n"
-            Set-Content $generatedPlugins $patched -NoNewline
-            Write-Host "✅ Patched generated_plugins.cmake"
-            Write-Host "--- Contents after patch ---"
-            Get-Content $generatedPlugins
-            Write-Host "---------------------------"
-          } else {
-            throw "generated_plugins.cmake not found at $generatedPlugins"
-          }
-
-          # 6. Build Windows app
-          Write-Host "==> Running flutter build windows..."
-          flutter build windows --release
-
-          # 7. Find the output EXE
-          Write-Host "==> Searching for EXE..."
-          $exe = Get-ChildItem -Recurse "build\windows" -Filter "bluetooth_chat.exe" |
+      # 7. Find EXE
+      - name: 🔍 Locate EXE
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Recurse "build\windows" -Filter "*.exe" |
                  Where-Object { $_.FullName -match "Release" } |
                  Select-Object -First 1
 
           if (!$exe) {
-            Write-Host "❌ EXE not found. Listing build directory:"
-            Get-ChildItem -Recurse "build\windows" | Select-Object FullName
-            throw "Build failed: Executable not found."
+            Write-Host "❌ EXE not found"
+            Get-ChildItem -Recurse "build\windows"
+            exit 1
           }
 
-          Write-Host "✅ Found: $($exe.FullName)"
+          Write-Host "✅ Found EXE: $($exe.FullName)"
           "RELEASE_DIR=$($exe.DirectoryName)" | Out-File -FilePath $env:GITHUB_ENV -Append
 
+      # 8. Install NSIS
       - name: 📥 Install NSIS
         run: choco install nsis --yes
 
-      - name: 🔨 Create NSIS installer
+      # 9. Create installer
+      - name: 🔨 Build Installer
         shell: pwsh
         run: |
           $version = "1.1.${{ github.run_number }}"
           $releaseDir = $env:RELEASE_DIR
+
           $script = @'
           Unicode true
-          !define APP_NAME    "BT SecureChat"
+          !define APP_NAME "BT SecureChat"
           !define APP_VERSION "APPVER"
-          !define APP_EXE      "bluetooth_chat.exe"
-          !define BUILD_DIR    "BUILDDIR"
-          !define PUBLISHER    "Ozo.Designer"
-          Name           "${APP_NAME} ${APP_VERSION}"
-          OutFile        "BT-SecureChat-Setup-v${APP_VERSION}.exe"
-          InstallDir     "$PROGRAMFILES64\BT SecureChat"
+          !define APP_EXE "bluetooth_chat.exe"
+          !define BUILD_DIR "BUILDDIR"
+
+          Name "${APP_NAME} ${APP_VERSION}"
+          OutFile "BT-SecureChat-Setup-v${APP_VERSION}.exe"
+          InstallDir "$PROGRAMFILES64\BT SecureChat"
           RequestExecutionLevel admin
-          SetCompressor lzma
+
           Page directory
           Page instfiles
+
           Section "Install"
             SetOutPath "$INSTDIR"
             File /r "${BUILD_DIR}\*.*"
-            WriteUninstaller "$INSTDIR\Uninstall.exe"
             CreateShortcut "$DESKTOP\BT SecureChat.lnk" "$INSTDIR\${APP_EXE}"
           SectionEnd
-          Section "Uninstall"
-            RMDir /r "$INSTDIR"
-            Delete "$DESKTOP\BT SecureChat.lnk"
-          SectionEnd
           '@
+
           $script = $script -replace 'APPVER', $version -replace 'BUILDDIR', $releaseDir
           $script | Out-File "installer.nsi" -Encoding UTF8
+
           makensis installer.nsi
 
-      - name: 🚀 Upload
+      # 10. Upload release
+      - name: 🚀 Upload Release
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
