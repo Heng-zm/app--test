@@ -1,16 +1,12 @@
 name: Windows-exe-build
-
 on:
   workflow_dispatch:
-
 permissions:
   contents: write
-
 jobs:
   build-windows:
     name: 🪟 Windows Release Build
     runs-on: windows-latest
-
     steps:
       - name: 📥 Checkout repository
         uses: actions/checkout@v4
@@ -33,31 +29,51 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
 
-          # 1. Initialize Project
+          # 1. Enable Windows desktop support
           flutter config --enable-windows-desktop
+
+          # 2. Scaffold Windows platform files (does NOT run pub get yet)
           flutter create --platforms=windows .
+
+          # 3. Fetch dependencies AFTER create so plugin symlinks are resolved correctly
           flutter pub get
+
+          # 4. Upgrade permission_handler_windows explicitly to ensure its
+          #    windows/ directory is fully materialized in .plugin_symlinks
+          flutter pub upgrade permission_handler_windows
+
+          # 5. Run build_runner
           flutter pub run build_runner build --delete-conflicting-outputs
 
-          # 2. Patch CMakeLists.txt (Binary Name & App ID)
+          # 6. Patch CMakeLists.txt (Binary Name & App ID)
           $cmakeMain = "windows\runner\CMakeLists.txt"
           (Get-Content $cmakeMain) `
             -replace 'set\(BINARY_NAME "[^"]*"\)',    'set(BINARY_NAME "bluetooth_chat")' `
             -replace 'set\(APPLICATION_ID "[^"]*"\)', 'set(APPLICATION_ID "com.kimheng.btsecurechat")' |
           Set-Content $cmakeMain
 
-          # 3. Build Windows App
+          # 7. Verify the plugin symlink actually exists before building
+          $pluginDir = "windows\flutter\ephemeral\.plugin_symlinks\permission_handler_windows\windows"
+          if (-not (Test-Path $pluginDir)) {
+            Write-Host "❌ Plugin directory still missing: $pluginDir"
+            Write-Host "Listing .plugin_symlinks for debug:"
+            Get-ChildItem -Recurse "windows\flutter\ephemeral\.plugin_symlinks" | Select-Object FullName
+            throw "permission_handler_windows plugin directory not found. Check pubspec.yaml dependency."
+          }
+          Write-Host "✅ Plugin dir confirmed: $pluginDir"
+
+          # 8. Build Windows app
           Write-Host "==> Running flutter build windows..."
           flutter build windows --release
 
-          # 4. Search for EXE
+          # 9. Search for the output EXE
           Write-Host "==> Searching for EXE..."
-          $exe = Get-ChildItem -Recurse "build\windows" -Filter "bluetooth_chat.exe" | 
-                 Where-Object { $_.FullName -match "Release" } | 
+          $exe = Get-ChildItem -Recurse "build\windows" -Filter "bluetooth_chat.exe" |
+                 Where-Object { $_.FullName -match "Release" } |
                  Select-Object -First 1
 
           if (!$exe) {
-            Write-Host "❌ EXE not found in standard paths. Listing build directory for debug:"
+            Write-Host "❌ EXE not found. Listing build directory for debug:"
             Get-ChildItem -Recurse "build\windows" | Select-Object FullName
             throw "Build failed: Executable not found."
           }
@@ -80,23 +96,19 @@ jobs:
           !define APP_EXE      "bluetooth_chat.exe"
           !define BUILD_DIR    "BUILDDIR"
           !define PUBLISHER    "Ozo.Designer"
-
           Name           "${APP_NAME} ${APP_VERSION}"
           OutFile        "BT-SecureChat-Setup-v${APP_VERSION}.exe"
           InstallDir     "$PROGRAMFILES64\BT SecureChat"
           RequestExecutionLevel admin
           SetCompressor lzma
-
           Page directory
           Page instfiles
-
           Section "Install"
             SetOutPath "$INSTDIR"
             File /r "${BUILD_DIR}\*.*"
             WriteUninstaller "$INSTDIR\Uninstall.exe"
             CreateShortcut "$DESKTOP\BT SecureChat.lnk" "$INSTDIR\${APP_EXE}"
           SectionEnd
-
           Section "Uninstall"
             RMDir /r "$INSTDIR"
             Delete "$DESKTOP\BT SecureChat.lnk"
