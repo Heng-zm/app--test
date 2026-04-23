@@ -6,10 +6,12 @@ class PermissionHelper {
   PermissionHelper._();
 
   /// Requests all necessary permissions (BT, Location, Camera, Photos, Mic).
-  /// Returns true only if the "hard" requirements (Bluetooth/Location) are met.
+  /// Returns true only if the "hard" requirements (Bluetooth/Connection) are met.
   static Future<bool> requestAllPermissions() async {
-    // Web and desktop: no runtime permissions needed via permission_handler
-    if (!AppPlatform.needsRuntimePermissions) return true;
+    // Web and desktop: no runtime permissions needed via this handler
+    if (!AppPlatform.needsRuntimePermissions) {
+      return true;
+    }
 
     final List<Permission> required = [];
 
@@ -30,44 +32,51 @@ class PermissionHelper {
     required.addAll([
       Permission.camera,
       Permission.microphone,
-      Permission
-          .photos, // On Android 13+, this handles granular media permissions
+      // Permission.photos automatically maps to READ_MEDIA_IMAGES on Android 13+
+      Permission.photos,
     ]);
 
-    if (required.isEmpty) return true;
-
-    // Request everything in a single system batch
-    final statuses = await required.request();
-
-    // Debug logging for denied permissions
-    for (final entry in statuses.entries) {
-      if (!entry.value.isGranted && !entry.value.isLimited) {
-        debugPrint('[Permissions] Denied: ${entry.key} → ${entry.value}');
-      }
+    if (required.isEmpty) {
+      return true;
     }
 
-    // ── Platform-Specific Validation ────────────────────────────────────────
+    // Request everything in a single system sequence
+    final Map<Permission, PermissionStatus> statuses = await required.request();
+
+    // Debug logging for denied/restricted permissions
+    statuses.forEach((permission, status) {
+      if (!status.isGranted && !status.isLimited) {
+        debugPrint('[Permissions] Restricted: $permission -> $status');
+      }
+    });
+
+    // ── Platform-Specific Validation Helper ─────────────────────────────────
 
     bool isGood(Permission p) {
       final status = statuses[p];
-      // isLimited is successful (used for iOS "Selected Photos" mode)
+      // isLimited is treated as success (specifically for iOS Photo Library)
       return status != null && (status.isGranted || status.isLimited);
     }
 
+    // ── Final Evaluation ────────────────────────────────────────────────────
+
     if (AppPlatform.isAndroid) {
-      // Android Core Requirements: Bluetooth (for connection)
+      // Core requirements for Android 12+: Scan + Connect + Advertise
+      // We do not strictly fail on 'location' here because Scan handles it.
       return isGood(Permission.bluetoothScan) &&
           isGood(Permission.bluetoothConnect) &&
           isGood(Permission.bluetoothAdvertise);
-    } else if (AppPlatform.isIOS) {
-      // iOS Core Requirements: Bluetooth
+    }
+
+    if (AppPlatform.isIOS) {
+      // Core requirement for iOS: Bluetooth
       return isGood(Permission.bluetooth);
     }
 
     return true;
   }
 
-  /// Optional: Specifically request background location if needed for iOS
+  /// Specifically request background location if needed for persistent links.
   static Future<bool> requestBackgroundLocation() async {
     if (AppPlatform.isIOS) {
       final status = await Permission.locationAlways.request();
@@ -76,6 +85,9 @@ class PermissionHelper {
     return true;
   }
 
-  /// Opens the app settings page
-  static Future<void> openSettings() => openAppSettings();
+  /// Opens the system settings page for the app so the user can manually
+  /// enable any denied permissions.
+  static Future<void> openSettings() async {
+    await openAppSettings();
+  }
 }

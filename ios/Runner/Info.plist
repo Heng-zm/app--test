@@ -2,63 +2,92 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>$(DEVELOPMENT_LANGUAGE)</string>
     <key>CFBundleDisplayName</key>
     <string>BT SecureChat</string>
+    <key>CFBundleExecutable</key>
+    <string>$(EXECUTABLE_NAME)</string>
     <key>CFBundleIdentifier</key>
     <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>bluetooth_chat</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
     <key>CFBundleShortVersionString</key>
     <string>$(FLUTTER_BUILD_NAME)</string>
+    <key>CFBundleSignature</key>
+    <string>????</string>
     <key>CFBundleVersion</key>
     <string>$(FLUTTER_BUILD_NUMBER)</string>
     <key>LSRequiresIPhoneOS</key>
     <true/>
 
-    <!-- 1. Bluetooth Permissions -->
+    <!-- 1. Bluetooth Permissions (Critical for Core Logic) -->
     <key>NSBluetoothAlwaysUsageDescription</key>
-    <string>We use Bluetooth to discover and connect to nearby devices for encrypted offline messaging.</string>
+    <string>BT SecureChat uses Bluetooth to discover and connect to nearby nodes for encrypted offline messaging.</string>
     <key>NSBluetoothPeripheralUsageDescription</key>
-    <string>We need Bluetooth access to communicate with nearby devices.</string>
+    <string>We need Bluetooth peripheral access to allow other devices to establish a secure link with your node.</string>
 
-    <!-- 2. Location Permissions (Required for Bluetooth Discovery) -->
+    <!-- 2. Location Permissions (Required for Radio Discovery) -->
     <key>NSLocationWhenInUseUsageDescription</key>
-    <string>Location access is required by iOS to scan for nearby Bluetooth hardware.</string>
+    <string>iOS requires location access to scan for nearby Bluetooth radio signatures.</string>
     <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-    <string>Background location allows us to maintain the secure chat connection while the app is in the background.</string>
+    <string>Background location allows the secure terminal to maintain connection integrity while the app is closed.</string>
 
-    <!-- 3. Camera & Microphone (For sharing media) -->
+    <!-- 3. Media Permissions (For Sharing Functionality) -->
     <key>NSCameraUsageDescription</key>
-    <string>We need camera access to take secure photos and videos within the chat.</string>
+    <string>Camera access is required to capture secure images to send through the encrypted tunnel.</string>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Microphone access is required for recording and sending secure voice messages.</string>
-
-    <!-- 4. Photo Library (For sharing existing files) -->
+    <string>Microphone access is needed for recording encrypted voice transmissions.</string>
     <key>NSPhotoLibraryUsageDescription</key>
-    <string>Access to your photo library allows you to send images and videos to your contacts.</string>
+    <string>We need access to your library to allow you to select and encrypt existing media files.</string>
     <key>NSPhotoLibraryAddUsageDescription</key>
-    <string>We need permission to save photos received from the chat into your gallery.</string>
+    <string>Permission is required to save decrypted media received from other nodes into your gallery.</string>
 
-    <!-- 5. Network (Internet is allowed by default, but we block HTTP for security) -->
+    <!-- 4. Security & Network Compliance -->
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
     <key>NSAppTransportSecurity</key>
     <dict>
         <key>NSAllowsArbitraryLoads</key>
         <false/>
     </dict>
 
-    <!-- Background Modes -->
+    <!-- 5. Background Operational Modes -->
     <key>UIBackgroundModes</key>
     <array>
         <string>bluetooth-central</string>
         <string>bluetooth-peripheral</string>
     </array>
 
-    <!-- Performance & Appearance -->
-    <key>CADisableMinimumFrameDurationOnPhone</key>
-    <true/>
+    <!-- 6. Display & UI Configuration -->
     <key>UIUserInterfaceStyle</key>
     <string>Dark</string>
+    <key>UIStatusBarStyle</key>
+    <string>UIStatusBarStyleLightContent</string>
+    <key>UIViewControllerBasedStatusBarAppearance</key>
+    <false/>
+    <key>CADisableMinimumFrameDurationOnPhone</key>
+    <true/>
     <key>UILaunchStoryboardName</key>
     <string>LaunchScreen</string>
     <key>UIMainStoryboardFile</key>
     <string>Main</string>
+
+    <!-- 7. Supported Orientations -->
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+    </array>
+    <key>UISupportedInterfaceOrientations~ipad</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationPortraitUpsideDown</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
 </dict>
 </plist>

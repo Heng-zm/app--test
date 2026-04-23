@@ -1,9 +1,7 @@
 // GENERATED CODE - DO NOT MODIFY BY HAND
-// Run: flutter pub run build_runner build
-//
-// This is a hand-written stub so the project compiles without running
-// build_runner. Replace with the real generated file after running:
-//   flutter pub run build_runner build --delete-conflicting-outputs
+// **************************************************************************
+// TypeAdapterGenerator
+// **************************************************************************
 
 part of 'message_model.dart';
 
@@ -13,17 +11,19 @@ class MessageAdapter extends TypeAdapter<Message> {
 
   @override
   Message read(BinaryReader reader) {
-    final numOfFields = reader.readByte();
-    final fields = <int, dynamic>{
+    final int numOfFields = reader.readByte();
+    final Map<int, dynamic> fields = <int, dynamic>{
       for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
     };
+
     return Message(
       id: fields[0] as String,
       text: fields[1] as String,
       encryptedText: fields[2] as String,
       isMine: fields[3] as bool,
       timestamp: fields[4] as DateTime,
-      // Excellent handling of database migrations/new fields
+      // Fallback to false if reading from an older database version
+      // where field 5 did not exist yet.
       isDecryptionError: fields[5] as bool? ?? false,
     );
   }
@@ -31,7 +31,7 @@ class MessageAdapter extends TypeAdapter<Message> {
   @override
   void write(BinaryWriter writer, Message obj) {
     writer
-      ..writeByte(6)
+      ..writeByte(6) // Total number of fields saved
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)

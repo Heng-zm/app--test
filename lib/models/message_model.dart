@@ -31,29 +31,43 @@ class Message extends HiveObject {
     this.isDecryptionError = false,
   });
 
-  /// Returns true if the message was successfully decrypted
+  /// Returns true if the message was successfully decrypted and is readable.
   bool get isValid => !isDecryptionError;
 
+  /// Returns a formatted time string (e.g., "14:30").
   String get timeString {
-    final h = timestamp.hour.toString().padLeft(2, '0');
-    final m = timestamp.minute.toString().padLeft(2, '0');
+    final String h = timestamp.hour.toString().padLeft(2, '0');
+    final String m = timestamp.minute.toString().padLeft(2, '0');
     return '$h:$m';
   }
 
+  /// Returns a human-friendly date string (Today, Yesterday, or DD/MM/YYYY).
   String get dateString {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final msgDate = DateTime(timestamp.year, timestamp.month, timestamp.day);
+    final DateTime now = DateTime.now();
 
-    final difference = today.difference(msgDate).inDays;
+    // Normalize dates to midnight to compare calendar days accurately.
+    final DateTime today = DateTime(now.year, now.month, now.day);
+    final DateTime yesterday = today.subtract(const Duration(days: 1));
+    final DateTime msgDate =
+        DateTime(timestamp.year, timestamp.month, timestamp.day);
 
-    if (difference == 0) return 'Today';
-    if (difference == 1) return 'Yesterday';
+    if (msgDate == today) {
+      return 'Today';
+    }
+
+    if (msgDate == yesterday) {
+      return 'Yesterday';
+    }
 
     // Format: DD/MM/YYYY
-    return '${timestamp.day.toString().padLeft(2, '0')}/${timestamp.month.toString().padLeft(2, '0')}/${timestamp.year}';
+    final String d = timestamp.day.toString().padLeft(2, '0');
+    final String m = timestamp.month.toString().padLeft(2, '0');
+    final String y = timestamp.year.toString();
+
+    return '$d/$m/$y';
   }
 
+  /// Creates a copy of this message with changed fields.
   Message copyWith({
     String? id,
     String? text,

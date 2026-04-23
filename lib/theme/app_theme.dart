@@ -28,12 +28,15 @@ class AppTheme {
       useMaterial3: true,
       brightness: Brightness.dark,
       scaffoldBackgroundColor: bgDeep,
+      canvasColor: bgSurface,
       primaryColor: accentCyan,
 
       colorScheme: const ColorScheme.dark(
         primary: accentCyan,
+        onPrimary: bgDeep,
         secondary: accentTeal,
         surface: bgCard,
+        onSurface: textPrimary,
         error: danger,
       ),
 
@@ -95,6 +98,12 @@ class AppTheme {
       navigationBarTheme: NavigationBarThemeData(
         backgroundColor: bgSurface,
         indicatorColor: accentCyan.withValues(alpha: 0.1),
+        iconTheme: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) {
+            return const IconThemeData(color: accentCyan);
+          }
+          return const IconThemeData(color: textDim);
+        }),
         labelTextStyle: WidgetStateProperty.all(
           GoogleFonts.spaceMono(fontSize: 11, fontWeight: FontWeight.w500),
         ),
@@ -110,6 +119,29 @@ class AppTheme {
             color: accentCyan, fontSize: 11, fontWeight: FontWeight.bold),
         unselectedLabelTextStyle:
             GoogleFonts.spaceMono(color: textDim, fontSize: 11),
+      ),
+
+      // Card Theme
+      cardTheme: CardTheme(
+        color: bgCard,
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: borderGlow, width: 1),
+        ),
+      ),
+
+      // Dialog Theme
+      dialogTheme: DialogTheme(
+        backgroundColor: bgSurface,
+        elevation: 24,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+          side: const BorderSide(color: borderGlow, width: 1),
+        ),
+        titleTextStyle: GoogleFonts.spaceMono(
+            color: accentCyan, fontSize: 18, fontWeight: FontWeight.bold),
+        contentTextStyle: GoogleFonts.inter(color: textSecondary, fontSize: 14),
       ),
 
       inputDecorationTheme: InputDecorationTheme(
