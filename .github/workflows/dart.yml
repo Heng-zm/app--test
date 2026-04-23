@@ -1,107 +1,49 @@
 name: iOS-ipa-build
 
 on:
-  workflow_dispatch: # Allows manual trigger from the Actions tab
-
-# Prevent multiple builds from running at the same time on the same branch
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
-permissions:
-  contents: write # Required to create the GitHub Release and upload the IPA
+  workflow_dispatch:
 
 jobs:
-  # STEP 1: Code Integrity and Quality
-  quality-check:
-    name: 🧪 Quality Check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: 🛠️ Setup Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: '3.22.2'
-          channel: 'stable'
-          cache: true
-
-      - run: flutter pub get
-      
-      - name: 🔍 Check Formatting
-        run: flutter format --set-exit-if-changed .
-        
-      - name: 🛡️ Static Analysis
-        run: flutter analyze # Ensures no "info" or "warning" issues remain
-        
-      - name: 🧪 Unit Tests
-        run: flutter test
-
-  # STEP 2: Secure Build and Release
   build-ios:
-    name: 🎉 Build & Secure IPA
-    needs: quality-check
+    name: 🎉 iOS Build
     runs-on: macos-latest
     steps:
-      - name: 📥 Checkout repository
-        uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
-      - name: 🛠️ Setup Flutter
+      - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.22.2'
           channel: 'stable'
-          cache: true
+          architecture: x64
 
-      - name: 📦 Install Dependencies
-        run: |
-          flutter pub get
-          cd ios
-          pod install
-        working-directory: .
+      - name: Install dependencies
+        run: flutter pub get
 
-      - name: 🏗️ Build Obfuscated iOS App
-        # --obfuscate: Protects your encryption logic
-        # --split-debug-info: Required for obfuscation and future crash debugging
-        run: |
-          flutter build ios --release --no-codesign \
-          --obfuscate --split-debug-info=build/ios/symbols \
-          --build-number=${{ github.run_number }} \
-          --build-name=1.1.${{ github.run_number }}
+      - name: Setup CocoaPods
+        run: pod repo update
+        working-directory: ios
 
-      - name: 📦 Package for Sideloading (IPA)
-        run: |
-          mkdir -p Payload
-          mv Runner.app Payload/
-          zip -qq -r -9 BT-SecureChat-v${{ github.run_number }}.ipa Payload
+      - name: Build iOS app
+        run: flutter build ios --release --no-codesign
+
+      - name: Create Payload directory
+        run: mkdir -p Payload
         working-directory: build/ios/iphoneos
 
-      - name: 🚀 Create GitHub Release
+      - name: Move Runner.app to Payload
+        run: mv Runner.app Payload/
+        working-directory: build/ios/iphoneos
+
+      - name: Create IPA file
+        run: zip -qq -r -9 FlutterIpaExport.ipa Payload
+        working-directory: build/ios/iphoneos
+
+      - name: Upload IPA to GitHub Releases
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: build/ios/iphoneos/BT-SecureChat-v${{ github.run_number }}.ipa
-          asset_name: BT-SecureChat-v${{ github.run_number }}.ipa
-          tag: v1.1.${{ github.run_number }}
+          file: build/ios/iphoneos/FlutterIpaExport.ipa
+          tag: v1.0
           overwrite: true
-          body: |
-            ## 🔒 BT SecureChat Release v1.1.${{ github.run_number }}
-            
-            ### 🛡️ Security Audit:
-            - **Obfuscation:** ENABLED (Dart logic encrypted)
-            - **Symbols:** Stripped (Release protection active)
-            - **Encryption:** AES-256-CBC
-            
-            ### ℹ️ Build Details:
-            - **Build ID:** `${{ github.run_number }}`
-            - **Engine:** Flutter 3.22.2 (Stable)
-            - **Min iOS:** 13.0
-            - **Status:** Unsigned (Sideload via AltStore / Sideloadly)
-
-      - name: 📄 Archive Debug Symbols
-        # This allows you to de-obfuscate crash logs later
-        uses: actions/upload-artifact@v4
-        with:
-          name: ios-debug-symbols-v${{ github.run_number }}
-          path: build/ios/symbols
-          retention-days: 30
+          body: "This is the first release"
