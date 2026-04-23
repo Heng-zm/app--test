@@ -14,7 +14,7 @@ class BTSignalBars extends StatelessWidget {
             : AppTheme.danger;
 
     return Semantics(
-      label: 'Signal strength $bars of 4',
+      label: 'Signal: $bars of 4',
       child: Row(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.end,

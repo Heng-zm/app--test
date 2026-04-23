@@ -52,13 +52,13 @@ class BluetoothService extends ChangeNotifier {
   }
 
   BtConnectionState get state => _state;
-  List<BTDevice> get pairedDevices => List.unmodifiable(_pairedDevices);
   List<BTDevice> get discovered {
     final list = List<BTDevice>.from(_discovered);
     list.sort((a, b) => (b.rssi ?? -100).compareTo(a.rssi ?? -100));
     return List.unmodifiable(list);
   }
 
+  List<BTDevice> get pairedDevices => List.unmodifiable(_pairedDevices);
   List<Message> get messages => List.unmodifiable(_messages);
   bool get isConnected => _state == BtConnectionState.connected;
   bool get isDiscovering => _isDiscovering;
@@ -87,7 +87,9 @@ class BluetoothService extends ChangeNotifier {
   }
 
   Future<void> startDiscovery() async {
-    if (_isDiscovering) await stopDiscovery();
+    if (_isDiscovering) {
+      await stopDiscovery();
+    }
     _discovered.clear();
     _isDiscovering = true;
     _setState(BtConnectionState.scanning);
@@ -101,7 +103,7 @@ class BluetoothService extends ChangeNotifier {
             _discoverySubject.add(BTDevice(
               name: r.device.platformName.isNotEmpty
                   ? r.device.platformName
-                  : 'Unknown Device',
+                  : 'Target Node',
               address: r.device.remoteId.str,
               type: 'BLE',
               rssi: r.rssi,
@@ -129,10 +131,10 @@ class BluetoothService extends ChangeNotifier {
   }
 
   Future<void> stopDiscovery() async {
-    if (AppPlatform.supportsClassicBluetooth) await _classic!.cancelDiscovery();
     await _bleScanSub?.cancel();
-    _bleScanSub = null;
-    if (fbp.FlutterBluePlus.isScanningNow) await fbp.FlutterBluePlus.stopScan();
+    if (fbp.FlutterBluePlus.isScanningNow) {
+      await fbp.FlutterBluePlus.stopScan();
+    }
     _stopScanUI();
   }
 
@@ -147,7 +149,9 @@ class BluetoothService extends ChangeNotifier {
   }
 
   Future<void> connectToDevice(BTDevice device) async {
-    if (_state == BtConnectionState.connecting) return;
+    if (_state == BtConnectionState.connecting) {
+      return;
+    }
     await stopDiscovery();
     await disconnect();
     _setState(BtConnectionState.connecting);
@@ -157,24 +161,24 @@ class BluetoothService extends ChangeNotifier {
       if (device.isBLE) {
         _bleDevice = fbp.BluetoothDevice.fromId(device.address);
         await _bleDevice!.connect(timeout: const Duration(seconds: 15));
-        if (AppPlatform.isAndroid) await _bleDevice!.requestMtu(512);
-
-        _bleStateSub = _bleDevice!.connectionState.listen((s) {
-          if (s == fbp.BluetoothConnectionState.disconnected && isConnected)
-            disconnect();
-        });
-
+        if (AppPlatform.isAndroid) {
+          await _bleDevice!.requestMtu(512);
+        }
         final svcs = await _bleDevice!.discoverServices();
         for (var s in svcs) {
           for (var c in s.characteristics) {
-            if (c.uuid.toString().toUpperCase() == _kRxUuid) _bleRx = c;
+            if (c.uuid.toString().toUpperCase() == _kRxUuid) {
+              _bleRx = c;
+            }
             if (c.uuid.toString().toUpperCase() == _kTxUuid) {
               await c.setNotifyValue(true);
               _bleNotifySub = c.onValueReceived.listen(_onRawData);
             }
           }
         }
-        if (_bleRx == null) throw Exception('Protocol Mismatch');
+        if (_bleRx == null) {
+          throw Exception('Protocol Mismatch');
+        }
       }
       _connectedDeviceName = device.name;
       _setState(BtConnectionState.connected);
@@ -193,7 +197,9 @@ class BluetoothService extends ChangeNotifier {
             .decode(_byteBuffer.sublist(0, idx), allowMalformed: true)
             .trim();
         _byteBuffer.removeRange(0, idx + 1);
-        if (line.isNotEmpty) _parsePacket(line);
+        if (line.isNotEmpty) {
+          _parsePacket(line);
+        }
       } catch (e) {
         _byteBuffer.removeRange(0, idx + 1);
       }
@@ -224,7 +230,9 @@ class BluetoothService extends ChangeNotifier {
   }
 
   Future<void> sendMessage(String text) async {
-    if (!isConnected || text.trim().isEmpty) return;
+    if (!isConnected || text.trim().isEmpty) {
+      return;
+    }
     final enc = _encryption.encrypt(text.trim());
     final packet = utf8.encode('${jsonEncode({'t': enc})}\n');
 
@@ -255,8 +263,9 @@ class BluetoothService extends ChangeNotifier {
 
   void clearError() {
     _errorMessage = null;
-    if (_state == BtConnectionState.error)
+    if (_state == BtConnectionState.error) {
       _state = BtConnectionState.disconnected;
+    }
     _notify();
   }
 
@@ -265,7 +274,9 @@ class BluetoothService extends ChangeNotifier {
   Future<void> disconnect() async {
     await _bleNotifySub?.cancel();
     await _bleStateSub?.cancel();
-    if (_bleDevice != null) await _bleDevice!.disconnect();
+    if (_bleDevice != null) {
+      await _bleDevice!.disconnect();
+    }
     _bleDevice = null;
     _bleRx = null;
     _byteBuffer.clear();
@@ -285,7 +296,9 @@ class BluetoothService extends ChangeNotifier {
   }
 
   void _notify() {
-    if (!_disposed) notifyListeners();
+    if (!_disposed) {
+      notifyListeners();
+    }
   }
 
   @override

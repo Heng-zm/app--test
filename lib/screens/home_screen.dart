@@ -79,7 +79,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         const SizedBox(width: 12),
-        const Text('BT SECURECHAT',
+        const Text('BT TERMINAL',
             style: TextStyle(
                 letterSpacing: 1.5, fontSize: 16, fontWeight: FontWeight.bold)),
         const SizedBox(width: 10),
@@ -139,7 +139,7 @@ class _HomeScreenState extends State<HomeScreen> {
       Icon(Icons.bluetooth_searching,
           color: AppTheme.accentCyan.withValues(alpha: 0.05), size: 160),
       const SizedBox(height: 24),
-      const Text('Select a node to establish uplink',
+      const Text('Establish Uplink to Start Chat',
           style: TextStyle(color: AppTheme.textDim, fontSize: 13)),
     ]));
   }
@@ -156,17 +156,19 @@ class _HomeScreenState extends State<HomeScreen> {
               style: TextStyle(
                   color: AppTheme.textSecondary,
                   fontSize: 10,
-                  fontWeight: FontWeight.bold)),
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 2)),
           ...service.pairedDevices
               .map((d) => _buildDeviceTile(context, d, service)),
         ],
         if (service.discovered.isNotEmpty) ...[
           const SizedBox(height: 24),
-          const Text('DISCOVERED NODES',
+          const Text('NEARBY NODES',
               style: TextStyle(
                   color: AppTheme.textSecondary,
                   fontSize: 10,
-                  fontWeight: FontWeight.bold)),
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 2)),
           ...service.discovered
               .map((d) => _buildDeviceTile(context, d, service)),
         ],
@@ -177,13 +179,15 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildStatusBar(BluetoothService service) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      decoration: BoxDecoration(color: Colors.cyan.withValues(alpha: 0.05)),
+      decoration:
+          BoxDecoration(color: AppTheme.bgSurface.withValues(alpha: 0.5)),
       child: Row(children: [
-        const Icon(Icons.bluetooth, color: AppTheme.accentCyan, size: 13),
+        const Icon(Icons.radio_button_checked,
+            color: AppTheme.accentGreen, size: 12),
         const SizedBox(width: 8),
         Text(service.state.name.toUpperCase(),
             style: const TextStyle(
-                color: AppTheme.accentCyan,
+                color: AppTheme.accentGreen,
                 fontSize: 10,
                 fontWeight: FontWeight.bold)),
       ]),
@@ -210,9 +214,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 ? const RepaintBoundary(child: ScanAnimation(size: 48))
                 : const Icon(Icons.search, color: AppTheme.accentCyan),
             const SizedBox(width: 16),
-            const Text('SEARCH FOR NODES',
+            const Text('POLL FREQUENCIES',
                 style: TextStyle(
-                    color: AppTheme.accentCyan, fontWeight: FontWeight.bold)),
+                    color: AppTheme.accentCyan,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 1)),
           ]),
         ),
       ),
@@ -256,6 +262,6 @@ class _HomeScreenState extends State<HomeScreen> {
       body: Center(child: RepaintBoundary(child: ScanAnimation(size: 100))));
   Widget _buildPermissionDenied() => const Scaffold(
       body: Center(
-          child: Text('Permissions Denied',
+          child: Text('Security Access Denied',
               style: TextStyle(color: Colors.white))));
 }
