@@ -29,86 +29,61 @@ jobs:
           cache: true
 
       # ──────────────────────────────────────────────────────────────────
-      # 3. Enable Windows desktop support
+      # 3. All Flutter setup + windows/ init + build in ONE shell.
+      #
+      #    Root cause of "No Windows desktop project configured":
+      #    - flutter config --enable-windows-desktop writes to the Flutter
+      #      tool's config file but each `run:` block spawns a fresh shell.
+      #    - flutter create --platforms=windows adds the windows/ folder
+      #      but if flutter config hasn't fully settled in the same process
+      #      the subsequent build step still sees no windows project.
+      #
+      #    Fix: run config → create → pub get → build_runner → build
+      #    all inside a single `run:` block so there is zero shell gap.
       # ──────────────────────────────────────────────────────────────────
-      - name: 🖥️ Enable Flutter Windows desktop
-        run: flutter config --enable-windows-desktop
-
-      # ──────────────────────────────────────────────────────────────────
-      # 4. Install pub dependencies
-      # ──────────────────────────────────────────────────────────────────
-      - name: 📦 Install pub dependencies
-        run: flutter pub get
-
-      # ──────────────────────────────────────────────────────────────────
-      # 5. Create the windows/ folder if it doesn't exist in the repo.
-      #    Your repo was created without `flutter create --platforms=windows`
-      #    so the windows/ directory is missing. `flutter create .` adds it
-      #    without touching any of your existing Dart source files.
-      # ──────────────────────────────────────────────────────────────────
-      - name: 🪟 Initialize Windows desktop project
+      - name: 🏗️ Configure, init & build Windows app
         shell: pwsh
         run: |
-          if (!(Test-Path "windows")) {
-            Write-Host "windows/ folder not found — creating it now..."
-            flutter create --platforms=windows .
-            Write-Host "✅ windows/ folder created."
-          } else {
-            Write-Host "✅ windows/ folder already exists — skipping."
-          }
+          # ── 1. Enable Windows desktop support ─────────────────────────
+          flutter config --enable-windows-desktop
+          Write-Host "✅ Windows desktop enabled."
 
-      # ──────────────────────────────────────────────────────────────────
-      # 6. Patch the Windows runner app name & company in CMakeLists.txt
-      #    flutter create uses generic placeholder values — we fix them here
-      # ──────────────────────────────────────────────────────────────────
-      - name: ✏️ Patch Windows app metadata
-        shell: pwsh
-        run: |
+          # ── 2. Install pub dependencies ───────────────────────────────
+          flutter pub get
+          Write-Host "✅ pub get done."
+
+          # ── 3. Create windows/ folder if missing ──────────────────────
+          #    `flutter create --platforms=windows .` is safe to run even
+          #    if windows/ already exists — it only adds missing files and
+          #    never overwrites your existing Dart source code.
+          flutter create --platforms=windows .
+          Write-Host "✅ windows/ folder ensured."
+
+          # ── 4. Patch app name in CMakeLists.txt ───────────────────────
           $cmake = "windows\runner\CMakeLists.txt"
           if (Test-Path $cmake) {
             (Get-Content $cmake) `
-              -replace 'set\(BINARY_NAME ".*"\)',   'set(BINARY_NAME "bluetooth_chat")' `
-              -replace 'set\(APPLICATION_ID ".*"\)', 'set(APPLICATION_ID "com.kimheng.btsecurechat")' |
+              -replace 'set\(BINARY_NAME "[^"]*"\)',    'set(BINARY_NAME "bluetooth_chat")' `
+              -replace 'set\(APPLICATION_ID "[^"]*"\)', 'set(APPLICATION_ID "com.kimheng.btsecurechat")' |
             Set-Content $cmake
             Write-Host "✅ CMakeLists.txt patched."
           }
 
-          $mainCpp = "windows\runner\main.cpp"
-          if (Test-Path $mainCpp) {
-            (Get-Content $mainCpp) `
-              -replace '"flutter_windows_example"', '"BT SecureChat"' `
-              -replace '"Flutter Windows Example"',  '"BT SecureChat"' |
-            Set-Content $mainCpp
-            Write-Host "✅ main.cpp patched."
-          }
+          # ── 5. Generate Hive adapters (hive_generator in pubspec.yaml) ─
+          flutter pub run build_runner build --delete-conflicting-outputs
+          Write-Host "✅ build_runner done."
 
-      # ──────────────────────────────────────────────────────────────────
-      # 7. Generate Hive adapters (hive_generator in your pubspec.yaml)
-      # ──────────────────────────────────────────────────────────────────
-      - name: ⚙️ Run build_runner (Hive code generation)
-        run: flutter pub run build_runner build --delete-conflicting-outputs
-
-      # ──────────────────────────────────────────────────────────────────
-      # 8. Build Windows release
-      #    Output: build\windows\x64\runner\Release\
-      # ──────────────────────────────────────────────────────────────────
-      - name: 🏗️ Build Windows app
-        run: |
+          # ── 6. Build Windows release ───────────────────────────────────
           flutter build windows --release `
             --build-number=${{ github.run_number }} `
             --build-name=1.1.${{ github.run_number }}
+          Write-Host "✅ Flutter Windows build complete."
 
-      # ──────────────────────────────────────────────────────────────────
-      # 9. Verify build output exists before packaging
-      # ──────────────────────────────────────────────────────────────────
-      - name: ✅ Verify build output
-        shell: pwsh
-        run: |
+          # ── 7. Verify .exe was produced ────────────────────────────────
           $releaseDir = "build\windows\x64\runner\Release"
           if (!(Test-Path $releaseDir)) {
-            Write-Host "❌ Release folder not found at: $releaseDir"
-            Write-Host "Listing build\ tree:"
-            Get-ChildItem -Recurse build\ -ErrorAction SilentlyContinue | Select-Object FullName
+            Write-Host "❌ Release dir not found: $releaseDir"
+            Get-ChildItem -Recurse build\ | Select-Object FullName
             exit 1
           }
           $exe = Get-ChildItem "$releaseDir\*.exe" | Select-Object -First 1
@@ -116,40 +91,36 @@ jobs:
             Write-Host "❌ No .exe found in $releaseDir"
             exit 1
           }
-          Write-Host "✅ Found: $($exe.FullName)"
+          Write-Host "✅ EXE: $($exe.FullName) ($('{0:N2}' -f ($exe.Length/1MB)) MB)"
 
       # ──────────────────────────────────────────────────────────────────
-      # 10. Install NSIS
+      # 4. Install NSIS
       # ──────────────────────────────────────────────────────────────────
       - name: 📥 Install NSIS
         run: choco install nsis --yes
 
       # ──────────────────────────────────────────────────────────────────
-      # 11. Write NSIS installer script
-      #     Produces a setup wizard with:
-      #       • Install to Program Files\BT SecureChat
-      #       • Start Menu shortcut
-      #       • Desktop shortcut
-      #       • Uninstaller registered in Add/Remove Programs
+      # 5. Write + compile NSIS installer script
       # ──────────────────────────────────────────────────────────────────
-      - name: 📝 Generate NSIS installer script
+      - name: 🔨 Create NSIS installer
         shell: pwsh
         run: |
           $version = "1.1.${{ github.run_number }}"
+
+          # Use @'...'@ (single-quote heredoc) so $ chars are NOT expanded
           $script = @'
           Unicode true
-          !define APP_NAME      "BT SecureChat"
-          !define APP_VERSION   "APP_VER_PLACEHOLDER"
-          !define APP_EXE       "bluetooth_chat.exe"
-          !define INSTALL_DIR   "$PROGRAMFILES64\BT SecureChat"
-          !define BUILD_DIR     "build\windows\x64\runner\Release"
+          !define APP_NAME    "BT SecureChat"
+          !define APP_VERSION "APPVER"
+          !define APP_EXE     "bluetooth_chat.exe"
+          !define BUILD_DIR   "build\windows\x64\runner\Release"
 
           Name            "${APP_NAME} ${APP_VERSION}"
-          OutFile         "BT-SecureChat-Setup-vAPP_VER_PLACEHOLDER.exe"
-          InstallDir      "${INSTALL_DIR}"
+          OutFile         "BT-SecureChat-Setup-vAPPVER.exe"
+          InstallDir      "$PROGRAMFILES64\BT SecureChat"
           InstallDirRegKey HKLM "Software\BT SecureChat" "Install_Dir"
           RequestExecutionLevel admin
-          SetCompressor    lzma
+          SetCompressor lzma
 
           Page directory
           Page instfiles
@@ -157,14 +128,11 @@ jobs:
           Section "Install"
             SetOutPath "$INSTDIR"
             File /r "${BUILD_DIR}\*.*"
-
             WriteUninstaller "$INSTDIR\Uninstall.exe"
-
             CreateDirectory "$SMPROGRAMS\BT SecureChat"
             CreateShortcut  "$SMPROGRAMS\BT SecureChat\BT SecureChat.lnk" "$INSTDIR\${APP_EXE}"
             CreateShortcut  "$SMPROGRAMS\BT SecureChat\Uninstall.lnk"     "$INSTDIR\Uninstall.exe"
             CreateShortcut  "$DESKTOP\BT SecureChat.lnk"                  "$INSTDIR\${APP_EXE}"
-
             WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\BT SecureChat" "DisplayName"     "BT SecureChat"
             WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\BT SecureChat" "UninstallString" "$INSTDIR\Uninstall.exe"
             WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\BT SecureChat" "DisplayVersion"  "${APP_VERSION}"
@@ -182,19 +150,17 @@ jobs:
           SectionEnd
           '@
 
-          # Substitute version placeholder safely (avoids $ interpolation issues)
-          $script = $script -replace 'APP_VER_PLACEHOLDER', $version
+          # Substitute version placeholder (safe — no $ conflicts)
+          $script = $script -replace 'APPVER', $version
           $script | Out-File -FilePath "installer.nsi" -Encoding UTF8
-          Write-Host "✅ NSIS script written for version $version"
+          Write-Host "✅ installer.nsi written."
+
+          # Compile
+          makensis installer.nsi
+          Write-Host "✅ NSIS installer compiled."
 
       # ──────────────────────────────────────────────────────────────────
-      # 12. Compile NSIS installer
-      # ──────────────────────────────────────────────────────────────────
-      - name: 🔨 Compile NSIS installer
-        run: makensis installer.nsi
-
-      # ──────────────────────────────────────────────────────────────────
-      # 13. Package portable ZIP (unzip and run, no install needed)
+      # 6. Package portable ZIP
       # ──────────────────────────────────────────────────────────────────
       - name: 📦 Package portable ZIP
         shell: pwsh
@@ -203,11 +169,10 @@ jobs:
           $src  = "build\windows\x64\runner\Release"
           $dest = "BT-SecureChat-Portable-v$version.zip"
           Compress-Archive -Path "$src\*" -DestinationPath $dest
-          $sizeMB = '{0:N2}' -f ((Get-Item $dest).Length / 1MB)
-          Write-Host "✅ Portable ZIP: $dest ($sizeMB MB)"
+          Write-Host "✅ $dest ($('{0:N2}' -f ((Get-Item $dest).Length/1MB)) MB)"
 
       # ──────────────────────────────────────────────────────────────────
-      # 14. Upload Setup installer to GitHub Releases
+      # 7. Upload Setup EXE to GitHub Releases
       # ──────────────────────────────────────────────────────────────────
       - name: 🚀 Upload Setup EXE to GitHub Releases
         uses: svenstaro/upload-release-action@v2
@@ -230,7 +195,7 @@ jobs:
             ### Downloads
             | File | Description |
             |---|---|
-            | `BT-SecureChat-Setup-*.exe` | Installer — Start Menu + Desktop shortcuts + uninstaller |
+            | `BT-SecureChat-Setup-*.exe` | Installer with shortcuts + uninstaller |
             | `BT-SecureChat-Portable-*.zip` | Portable — unzip and run, no install needed |
 
             ### Requirements
@@ -238,7 +203,7 @@ jobs:
             - No additional runtime required
 
       # ──────────────────────────────────────────────────────────────────
-      # 15. Upload Portable ZIP to GitHub Releases
+      # 8. Upload Portable ZIP to GitHub Releases
       # ──────────────────────────────────────────────────────────────────
       - name: 🚀 Upload Portable ZIP to GitHub Releases
         uses: svenstaro/upload-release-action@v2
