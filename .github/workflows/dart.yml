@@ -29,27 +29,30 @@ jobs:
           pod install
         working-directory: .
 
-      - name: 🔓 Bypass Apple Signing & Rename
-        # 1. Renames com.example to avoid Xcode blocking the build
-        # 2. Injects CODE_SIGNING_ALLOWED=NO into the project file
-        # 3. Strips Team ID requirements
+      - name: 🔓 Hard-Bypass Apple Signing
+        # This script does 3 things:
+        # 1. Renames the bundle ID globally
+        # 2. Forces Manual Signing (Stops Xcode from asking for a Team)
+        # 3. Wipes all Team and Profile IDs from the project file
         run: |
           find . -type f \( -name "*.pbxproj" -o -name "*.xml" -o -name "*.gradle" \) -exec sed -i '' 's/com.example.material3Counter/com.kimheng.btsecurechat/g' {} +
+          sed -i '' 's/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g' ios/Runner.xcodeproj/project.pbxproj
           sed -i '' 's/DEVELOPMENT_TEAM = [^;]*;//g' ios/Runner.xcodeproj/project.pbxproj
           sed -i '' 's/PROVISIONING_PROFILE_SPECIFIER = [^;]*;//g' ios/Runner.xcodeproj/project.pbxproj
-          sed -i '' 's/CODE_SIGN_STYLE = Automatic;/CODE_SIGN_STYLE = Manual;/g' ios/Runner.xcodeproj/project.pbxproj
-          sed -i '' 's/CODE_SIGNING_REQUIRED = YES;/CODE_SIGNING_REQUIRED = NO;/g' ios/Runner.xcodeproj/project.pbxproj
-          sed -i '' '/inline.*CODE_SIGNING_ALLOWED = YES;/d' ios/Runner.xcodeproj/project.pbxproj
-          # Force the project to allow unsigned builds
+          
+          # Inject bypass directly into Flutter's internal build configs
           echo "CODE_SIGNING_ALLOWED=NO" >> ios/Flutter/Generated.xcconfig
           echo "CODE_SIGNING_REQUIRED=NO" >> ios/Flutter/Generated.xcconfig
           echo "CODE_SIGNING_IDENTITY=" >> ios/Flutter/Generated.xcconfig
+          echo "EXPANDED_CODE_SIGN_IDENTITY=" >> ios/Flutter/Generated.xcconfig
 
       - name: 🏗️ Build iOS (Unsigned)
+        # We use '--' to pass raw Xcode arguments directly
         run: |
           flutter build ios --release --no-codesign \
             --build-number=${{ github.run_number }} \
-            --build-name=1.1.${{ github.run_number }}
+            --build-name=1.1.${{ github.run_number }} \
+            -- CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGNING_IDENTITY=""
 
       - name: 📦 Package IPA for Sideloading
         run: |
@@ -68,6 +71,6 @@ jobs:
           overwrite: true
           body: |
             ## 🔒 BT SecureChat Release
-            - **Status:** Unsigned IPA (Success)
-            - **Installation:** Use AltStore, Sideloadly, or MapleSign.
-            - **Security:** AES-256 Obfuscated build.
+            - **Status:** Unsigned IPA (Build Successful)
+            - **Target:** iOS 13.0+
+            - **Installation:** Sideload via AltStore / Sideloadly.
