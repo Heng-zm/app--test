@@ -35,100 +35,118 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
 
-          # 1. Enable Windows desktop
-          Write-Host "==> flutter config --enable-windows-desktop"
+          # ── 1. Enable Windows desktop ──────────────────────────────────
           flutter config --enable-windows-desktop
           if ($LASTEXITCODE -ne 0) { throw "flutter config failed" }
 
-          # 2. First pub get
-          Write-Host "==> flutter pub get"
+          # ── 2. pub get ─────────────────────────────────────────────────
           flutter pub get
           if ($LASTEXITCODE -ne 0) { throw "flutter pub get failed" }
 
-          # 3. Create windows/ folder
-          Write-Host "==> flutter create --platforms=windows ."
+          # ── 3. Create windows/ folder ──────────────────────────────────
           flutter create --platforms=windows .
           if ($LASTEXITCODE -ne 0) { throw "flutter create failed" }
+          Write-Host "✅ windows\ created"
 
-          if (!(Test-Path "windows\CMakeLists.txt")) {
-            throw "windows\CMakeLists.txt missing after flutter create"
-          }
-          Write-Host "✅ windows\ folder created"
-
-          # Patch app name
-          $cmake = "windows\runner\CMakeLists.txt"
-          if (Test-Path $cmake) {
-            (Get-Content $cmake) `
-              -replace 'set\(BINARY_NAME "[^"]*"\)',    'set(BINARY_NAME "bluetooth_chat")' `
-              -replace 'set\(APPLICATION_ID "[^"]*"\)', 'set(APPLICATION_ID "com.kimheng.btsecurechat")' |
-            Set-Content $cmake
-            Write-Host "✅ CMakeLists.txt patched"
-          }
-
-          # 4. Second pub get
-          Write-Host "==> flutter pub get (second)"
+          # ── 4. Second pub get ──────────────────────────────────────────
           flutter pub get
-          if ($LASTEXITCODE -ne 0) { throw "flutter pub get second failed" }
+          if ($LASTEXITCODE -ne 0) { throw "flutter pub get (2) failed" }
 
-          # 5. Manually create plugin symlinks.
-          #    flutter pub get does NOT create .plugin_symlinks on Windows CI —
-          #    it only does so during `flutter run` or when a build tool triggers
-          #    the ephemeral directory generation. We do it ourselves here by
-          #    finding each Windows plugin in the pub cache and linking it.
-          $symlinksDir = "windows\flutter\ephemeral\.plugin_symlinks"
-          New-Item -ItemType Directory -Force -Path $symlinksDir | Out-Null
-          Write-Host "==> Creating plugin symlinks in $symlinksDir"
+          # ── 5. Patch CMakeLists.txt ────────────────────────────────────
+          $cmake = "windows\runner\CMakeLists.txt"
+          (Get-Content $cmake) `
+            -replace 'set\(BINARY_NAME "[^"]*"\)',    'set(BINARY_NAME "bluetooth_chat")' `
+            -replace 'set\(APPLICATION_ID "[^"]*"\)', 'set(APPLICATION_ID "com.kimheng.btsecurechat")' |
+          Set-Content $cmake
+          Write-Host "✅ CMakeLists.txt patched"
 
-          $pubCache = $env:PUB_CACHE
-          if (!$pubCache) { $pubCache = "$env:LOCALAPPDATA\Pub\Cache" }
+          # ── 6. Run cmake configure once so Flutter generates
+          #       windows/flutter/ephemeral/ including generated_plugins.cmake
+          #       We deliberately ignore the error — it fails on missing symlinks
+          #       but DOES write the generated_plugins.cmake file we need to patch.
+          $vsPath  = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
+          $buildDir = "$PWD\build\windows\x64"
+          New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
+
+          Write-Host "==> cmake configure (expected to fail — we just need generated_plugins.cmake)"
+          & "$vsPath" -S "$PWD\windows" -B "$buildDir" `
+            -G "Visual Studio 17 2022" -A x64 `
+            -DFLUTTER_TARGET_PLATFORM=windows-x64 2>&1 | Write-Host
+          # Do NOT check exit code here — failure is expected
+
+          # ── 7. Find generated_plugins.cmake and patch it to use absolute
+          #       pub cache paths instead of broken symlink paths ──────────
+          $genPlugins = "windows\flutter\ephemeral\generated_plugins.cmake"
+
+          if (!(Test-Path $genPlugins)) {
+            # Sometimes Flutter writes it to a different path — search for it
+            $genPlugins = Get-ChildItem -Recurse "windows" -Filter "generated_plugins.cmake" |
+                            Select-Object -First 1 -ExpandProperty FullName
+          }
+
+          if (!(Test-Path $genPlugins)) {
+            Write-Host "❌ generated_plugins.cmake not found. Searching all build dirs:"
+            Get-ChildItem -Recurse . -Filter "generated_plugins.cmake" | Select-Object FullName
+            throw "generated_plugins.cmake not found"
+          }
+
+          Write-Host "✅ Found: $genPlugins"
+          Write-Host "--- Original content ---"
+          Get-Content $genPlugins | Write-Host
+
+          # Locate pub cache
+          $pubCache  = if ($env:PUB_CACHE) { $env:PUB_CACHE } else { "$env:LOCALAPPDATA\Pub\Cache" }
           $hostedDir = Join-Path $pubCache "hosted\pub.dev"
-          Write-Host "Pub cache hosted dir: $hostedDir"
+          Write-Host "Pub cache: $hostedDir"
 
-          # Windows plugins that ship a /windows CMake folder
-          $windowsPlugins = @(
-            "permission_handler_windows",
-            "shared_preferences_windows",
-            "path_provider_windows",
-            "flutter_blue_plus_windows"
-          )
+          # Read and patch the file — replace each symlink path with the real cache path
+          $content = Get-Content $genPlugins -Raw
 
-          foreach ($plugin in $windowsPlugins) {
-            # Find the installed version folder (e.g. permission_handler_windows-0.2.1)
+          # Find all plugin references like .plugin_symlinks/PLUGIN_NAME
+          $pluginRefs = [regex]::Matches($content, '\.plugin_symlinks[/\\]([^/\\"]+)')
+          $patchedPlugins = @{}
+
+          foreach ($match in $pluginRefs) {
+            $pluginName = $match.Groups[1].Value
+            if ($patchedPlugins.ContainsKey($pluginName)) { continue }
+
+            # Find this plugin in the pub cache
             $pluginDir = Get-ChildItem $hostedDir -Directory |
-                           Where-Object { $_.Name -like "$plugin-*" } |
+                           Where-Object { $_.Name -like "$pluginName-*" } |
                            Sort-Object Name -Descending |
                            Select-Object -First 1
 
             if ($pluginDir) {
-              $linkPath = Join-Path $symlinksDir $plugin
-              if (!(Test-Path $linkPath)) {
-                # Create a directory junction (works without admin on Windows CI)
-                cmd /c mklink /J "$linkPath" "$($pluginDir.FullName)" 2>&1
-                Write-Host "✅ Linked: $plugin -> $($pluginDir.FullName)"
-              } else {
-                Write-Host "ℹ️  Already exists: $plugin"
-              }
+              # Escape backslashes for cmake (use forward slashes)
+              $realPath = $pluginDir.FullName.Replace('\', '/')
+              Write-Host "  Patching $pluginName -> $realPath"
+              # Replace the symlink reference with the real absolute path
+              $content = $content -replace [regex]::Escape(".plugin_symlinks/$pluginName"), $realPath
+              $content = $content -replace [regex]::Escape(".plugin_symlinks\$pluginName"), $realPath
+              $patchedPlugins[$pluginName] = $realPath
             } else {
-              Write-Host "⚠️  Plugin not found in cache: $plugin (may not be needed on Windows)"
+              Write-Host "  ⚠️  $pluginName not found in pub cache — removing from cmake"
+              # Remove the add_subdirectory and target_link_libraries lines for this plugin
+              $content = $content -replace "(?m)^.*\.plugin_symlinks[/\\]$([regex]::Escape($pluginName))[^\r\n]*[\r\n]", ""
             }
           }
 
-          Write-Host "Plugin symlinks created:"
-          Get-ChildItem $symlinksDir | Select-Object Name, LinkType, Target
+          $content | Set-Content $genPlugins -NoNewline
+          Write-Host "--- Patched content ---"
+          Get-Content $genPlugins | Write-Host
 
-          # 6. Hive code generation
-          Write-Host "==> build_runner"
+          # ── 8. Hive code generation ────────────────────────────────────
           flutter pub run build_runner build --delete-conflicting-outputs
           if ($LASTEXITCODE -ne 0) { throw "build_runner failed" }
 
-          # 7. Build
+          # ── 9. Build (cmake will now find all plugin directories) ──────
           Write-Host "==> flutter build windows --release"
           flutter build windows --release `
             --build-number=${{ github.run_number }} `
             --build-name=1.1.${{ github.run_number }}
           if ($LASTEXITCODE -ne 0) { throw "flutter build windows failed" }
 
-          # 8. Find .exe and export path
+          # ── 10. Find .exe and export path ──────────────────────────────
           $exe = Get-ChildItem -Recurse "build\windows" -Filter "*.exe" |
                    Where-Object { $_.DirectoryName -match "Release" -and $_.Name -notmatch "Uninstall" } |
                    Select-Object -First 1
@@ -136,7 +154,7 @@ jobs:
           if (!$exe) {
             Write-Host "❌ No .exe found. Build tree:"
             Get-ChildItem -Recurse "build\windows" | Select-Object FullName
-            throw "EXE not found after build"
+            throw "EXE not found"
           }
 
           Write-Host "✅ EXE: $($exe.FullName) ($('{0:N2}' -f ($exe.Length/1MB)) MB)"
@@ -197,10 +215,9 @@ jobs:
           $script = $script -replace 'APPVER',   $version
           $script = $script -replace 'BUILDDIR',  $releaseDir
           $script | Out-File -FilePath "installer.nsi" -Encoding UTF8
-
           makensis installer.nsi
           if ($LASTEXITCODE -ne 0) { throw "makensis failed" }
-          Write-Host "✅ Installer: BT-SecureChat-Setup-v$version.exe"
+          Write-Host "✅ BT-SecureChat-Setup-v$version.exe"
 
       - name: 📦 Package portable ZIP
         shell: pwsh
