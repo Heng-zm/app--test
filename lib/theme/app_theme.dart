@@ -2,34 +2,42 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 class AppTheme {
-  // Color palette - deep navy/teal cyberpunk
+  // ── Color Palette (Deep Cyberpunk) ────────────────────────────────────────
   static const Color bgDeep = Color(0xFF070B14);
   static const Color bgCard = Color(0xFF0D1526);
   static const Color bgSurface = Color(0xFF111D35);
+
   static const Color accentCyan = Color(0xFF00E5FF);
   static const Color accentTeal = Color(0xFF00BFA5);
   static const Color accentPurple = Color(0xFF7C4DFF);
   static const Color accentGreen = Color(0xFF00E676);
+
   static const Color textPrimary = Color(0xFFE8F4F8);
   static const Color textSecondary = Color(0xFF7A9BB5);
   static const Color textDim = Color(0xFF3D5A73);
+
   static const Color danger = Color(0xFFFF5252);
   static const Color warning = Color(0xFFFFD740);
+
   static const Color myBubble = Color(0xFF0A3D62);
   static const Color theirBubble = Color(0xFF0D1E33);
   static const Color borderGlow = Color(0xFF1A4A6B);
 
   static ThemeData get darkTheme {
     return ThemeData(
+      useMaterial3: true,
       brightness: Brightness.dark,
       scaffoldBackgroundColor: bgDeep,
       primaryColor: accentCyan,
+
       colorScheme: const ColorScheme.dark(
         primary: accentCyan,
         secondary: accentTeal,
         surface: bgCard,
         error: danger,
       ),
+
+      // ── Typography ────────────────────────────────────────────────────────
       textTheme: TextTheme(
         displayLarge: GoogleFonts.spaceMono(
           color: textPrimary,
@@ -67,6 +75,9 @@ class AppTheme {
           letterSpacing: 1.2,
         ),
       ),
+
+      // ── Component Themes ──────────────────────────────────────────────────
+
       appBarTheme: AppBarTheme(
         backgroundColor: bgDeep,
         elevation: 0,
@@ -79,6 +90,28 @@ class AppTheme {
         ),
         iconTheme: const IconThemeData(color: accentCyan),
       ),
+
+      // Navigation Bar (Mobile)
+      navigationBarTheme: NavigationBarThemeData(
+        backgroundColor: bgSurface,
+        indicatorColor: accentCyan.withValues(alpha: 0.1),
+        labelTextStyle: WidgetStateProperty.all(
+          GoogleFonts.spaceMono(fontSize: 11, fontWeight: FontWeight.w500),
+        ),
+      ),
+
+      // Navigation Rail (Tablet/Desktop)
+      navigationRailTheme: NavigationRailThemeData(
+        backgroundColor: bgSurface,
+        indicatorColor: accentCyan.withValues(alpha: 0.1),
+        selectedIconTheme: const IconThemeData(color: accentCyan),
+        unselectedIconTheme: const IconThemeData(color: textDim),
+        selectedLabelTextStyle: GoogleFonts.spaceMono(
+            color: accentCyan, fontSize: 11, fontWeight: FontWeight.bold),
+        unselectedLabelTextStyle:
+            GoogleFonts.spaceMono(color: textDim, fontSize: 11),
+      ),
+
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: bgSurface,
@@ -98,6 +131,7 @@ class AppTheme {
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       ),
+
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
           backgroundColor: accentCyan,
@@ -113,6 +147,7 @@ class AppTheme {
           ),
         ),
       ),
+
       iconTheme: const IconThemeData(color: accentCyan),
       dividerColor: borderGlow,
     );

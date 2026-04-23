@@ -10,16 +10,15 @@ dependencies:
   flutter:
     sdk: flutter
   
-  # Standard icons for iOS/macOS compatibility
   cupertino_icons: ^1.0.8
 
-  # ── Bluetooth ─────────────────────────────────────────────────────────
-  # Classic SPP — Android only. 
-  # Note: If build fails on Android 14+, check 'extractNativeLibs' in Manifest.
-  flutter_bluetooth_serial: ^0.4.0
+  # ── UI & Fonts (Fixes your error) ─────────────────────────────────────
+  google_fonts: ^6.2.1
+  flutter_animate: ^4.5.0
+  gap: ^3.0.1
 
-  # BLE — Cross-platform. 
-  # v1.34.0+ is required for reliable Android 14/15 and iOS 17/18 support.
+  # ── Bluetooth ─────────────────────────────────────────────────────────
+  flutter_bluetooth_serial: ^0.4.0
   flutter_blue_plus: ^1.34.0
 
   # ── Permissions ───────────────────────────────────────────────────────
@@ -27,10 +26,9 @@ dependencies:
 
   # ── Encryption ────────────────────────────────────────────────────────
   encrypt: ^5.0.3
-  pointycastle: ^3.9.1
   crypto: ^3.0.3
 
-  # ── State ─────────────────────────────────────────────────────────────
+  # ── State Management ──────────────────────────────────────────────────
   provider: ^6.1.2
 
   # ── Persistence ───────────────────────────────────────────────────────
@@ -38,27 +36,19 @@ dependencies:
   hive_flutter: ^1.1.0
   hive: ^2.2.3
 
-  # ── UI helpers ────────────────────────────────────────────────────────
-  google_fonts: ^6.2.1
-  flutter_animate: ^4.5.0
-  gap: ^3.0.1
-
-  # ── Utils ─────────────────────────────────────────────────────────────
+  # ── Utilities ─────────────────────────────────────────────────────────
   uuid: ^4.3.3
-  intl: ^0.19.0
   rxdart: ^0.28.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^3.0.0
+  flutter_lints: ^4.0.0
   hive_generator: ^2.0.1
   build_runner: ^2.4.9
 
 flutter:
   uses-material-design: true
-  
-  # Assets must be defined if you are using custom icons or images.
-  # Ensure the directory 'assets/' exists in your project root.
-  assets:
-    - assets/
+  # Ensure you have an assets folder if you uncomment this:
+  # assets:
+  #   - assets/
