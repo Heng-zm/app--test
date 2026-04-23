@@ -33,64 +33,64 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
 
-          # 1. Initialize Flutter project
+          # 1. Initialize Project
           flutter config --enable-windows-desktop
           flutter create --platforms=windows .
           flutter pub get
           flutter pub run build_runner build --delete-conflicting-outputs
 
-          # 2. Patch CMakeLists.txt (Standard Setup)
+          # 2. Patch CMakeLists.txt (Binary Name)
           $cmakeMain = "windows\runner\CMakeLists.txt"
           (Get-Content $cmakeMain) `
             -replace 'set\(BINARY_NAME "[^"]*"\)',    'set(BINARY_NAME "bluetooth_chat")' `
             -replace 'set\(APPLICATION_ID "[^"]*"\)', 'set(APPLICATION_ID "com.kimheng.btsecurechat")' |
           Set-Content $cmakeMain
 
-          # 3. Generate Build Files (This creates the ephemeral folder)
-          # We use the raw cmake command so we can intercept the plugins file
+          # 3. Generate Build Files
           $buildDir = "build/windows/x64"
-          New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
+          if (!(Test-Path $buildDir)) { New-Item -ItemType Directory -Force -Path $buildDir }
           
           Write-Host "==> Generating CMake project..."
           cmake -S windows -B $buildDir -G "Visual Studio 17 2022" -A x64 -DFLUTTER_TARGET_PLATFORM=windows-x64
 
-          # 4. THE FIX: Patch generated_plugins.cmake to use Absolute Paths
-          # This prevents the "directory not found" symlink error
+          # 4. Patch plugins (The Symlink Fix)
           $genPlugins = "windows\flutter\ephemeral\generated_plugins.cmake"
-          if (!(Test-Path $genPlugins)) { 
-             $genPlugins = Get-ChildItem -Recurse -Filter "generated_plugins.cmake" | Select-Object -First 1 -ExpandProperty FullName
-          }
-
-          Write-Host "✅ Patching: $genPlugins"
-          $pubCache = if ($env:PUB_CACHE) { $env:PUB_CACHE } else { "$env:USERPROFILE\.pub-cache" }
-          $hostedDir = Join-Path $pubCache "hosted/pub.dev"
-          $content = Get-Content $genPlugins -Raw
-
-          # Find all plugin symlink references and replace them with real paths from pub cache
-          $pluginRefs = [regex]::Matches($content, '\.plugin_symlinks[/\\]([^/\\"]+)')
-          foreach ($match in $pluginRefs) {
-            $pluginName = $match.Groups[1].Value
-            $pluginDir = Get-ChildItem $hostedDir -Directory | Where-Object { $_.Name -like "$pluginName-*" } | Sort-Object Name -Descending | Select-Object -First 1
-            if ($pluginDir) {
-              $realPath = $pluginDir.FullName.Replace('\', '/')
-              $content = $content -replace [regex]::Escape(".plugin_symlinks/$pluginName"), $realPath
-              $content = $content -replace [regex]::Escape(".plugin_symlinks\$pluginName"), $realPath
-              Write-Host "   -> Mapped $pluginName to $realPath"
-            }
-          }
-          $content | Set-Content $genPlugins -NoNewline
-
-          # 5. Manual Compilation (Bypassing 'flutter build' to keep our patches)
-          Write-Host "==> Compiling Release Build..."
-          cmake --build $buildDir --config Release --target INSTALL
-
-          # 6. Locate the resulting EXE
-          $exe = Get-ChildItem -Recurse "build\windows" -Filter "bluetooth_chat.exe" |
-                 Where-Object { $_.DirectoryName -match "Release" } | Select-Object -First 1
+          $pubCache = "$env:LOCALAPPDATA\Pub\Cache\hosted\pub.dev"
+          Write-Host "Using Pub Cache: $pubCache"
           
-          if (!$exe) { throw "Build failed: EXE not found" }
+          if (Test-Path $genPlugins) {
+            $content = Get-Content $genPlugins -Raw
+            $pluginRefs = [regex]::Matches($content, '\.plugin_symlinks[/\\]([^/\\"]+)')
+            foreach ($match in $pluginRefs) {
+              $pluginName = $match.Groups[1].Value
+              $pluginDir = Get-ChildItem $pubCache -Directory | Where-Object { $_.Name -like "$pluginName-*" } | Sort-Object Name -Descending | Select-Object -First 1
+              if ($pluginDir) {
+                $realPath = $pluginDir.FullName.Replace('\', '/')
+                $content = $content -replace [regex]::Escape(".plugin_symlinks/$pluginName"), $realPath
+                $content = $content -replace [regex]::Escape(".plugin_symlinks\$pluginName"), $realPath
+                Write-Host "   -> Mapped $pluginName"
+              }
+            }
+            $content | Set-Content $genPlugins -NoNewline
+          }
+
+          # 5. Build
+          cmake --build $buildDir --config Release
+
+          # 6. HEAVY DUTY EXE SEARCH
+          Write-Host "==> Searching for EXE..."
+          $exe = Get-ChildItem -Recurse "build\windows" -Filter "*.exe" | 
+                 Where-Object { $_.FullName -match "Release" -and $_.Name -notmatch "Uninstall" -and $_.FullName -notmatch "CMakeFiles" } | 
+                 Select-Object -First 1
+
+          if (!$exe) {
+            Write-Host "❌ EXE not found in standard paths. Listing build directory for debug:"
+            Get-ChildItem -Recurse "build\windows" | Select-Object FullName
+            throw "Build failed: Executable not found."
+          }
+
+          Write-Host "✅ Found: $($exe.FullName)"
           "RELEASE_DIR=$($exe.DirectoryName)" | Out-File -FilePath $env:GITHUB_ENV -Append
-          Write-Host "✅ Build Success: $($exe.FullName)"
 
       - name: 📥 Install NSIS
         run: choco install nsis --yes
@@ -122,8 +122,6 @@ jobs:
             File /r "${BUILD_DIR}\*.*"
             WriteUninstaller "$INSTDIR\Uninstall.exe"
             CreateShortcut "$DESKTOP\BT SecureChat.lnk" "$INSTDIR\${APP_EXE}"
-            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\BT SecureChat" "DisplayName" "${APP_NAME}"
-            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\BT SecureChat" "Publisher" "${PUBLISHER}"
           SectionEnd
 
           Section "Uninstall"
@@ -135,7 +133,7 @@ jobs:
           $script | Out-File "installer.nsi" -Encoding UTF8
           makensis installer.nsi
 
-      - name: 🚀 Upload Assets
+      - name: 🚀 Upload
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
