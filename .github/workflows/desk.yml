@@ -29,51 +29,63 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
 
-          # 1. Enable Windows desktop support
+          # 1. Enable Windows desktop & scaffold platform files
           flutter config --enable-windows-desktop
-
-          # 2. Scaffold Windows platform files (does NOT run pub get yet)
           flutter create --platforms=windows .
 
-          # 3. Fetch dependencies AFTER create so plugin symlinks are resolved correctly
+          # 2. Fetch dependencies AFTER create so plugin symlinks are resolved correctly
           flutter pub get
 
-          # 4. Upgrade permission_handler_windows explicitly to ensure its
-          #    windows/ directory is fully materialized in .plugin_symlinks
-          flutter pub upgrade permission_handler_windows
-
-          # 5. Run build_runner
+          # 3. Run build_runner
           flutter pub run build_runner build --delete-conflicting-outputs
 
-          # 6. Patch CMakeLists.txt (Binary Name & App ID)
+          # 4. Patch CMakeLists.txt (Binary Name & App ID)
           $cmakeMain = "windows\runner\CMakeLists.txt"
           (Get-Content $cmakeMain) `
             -replace 'set\(BINARY_NAME "[^"]*"\)',    'set(BINARY_NAME "bluetooth_chat")' `
             -replace 'set\(APPLICATION_ID "[^"]*"\)', 'set(APPLICATION_ID "com.kimheng.btsecurechat")' |
           Set-Content $cmakeMain
 
-          # 7. Verify the plugin symlink actually exists before building
-          $pluginDir = "windows\flutter\ephemeral\.plugin_symlinks\permission_handler_windows\windows"
-          if (-not (Test-Path $pluginDir)) {
-            Write-Host "❌ Plugin directory still missing: $pluginDir"
-            Write-Host "Listing .plugin_symlinks for debug:"
-            Get-ChildItem -Recurse "windows\flutter\ephemeral\.plugin_symlinks" | Select-Object FullName
-            throw "permission_handler_windows plugin directory not found. Check pubspec.yaml dependency."
+          # 5. KEY FIX: Remove permission_handler_windows from the generated CMake plugin list.
+          #
+          #    WHY: permission_handler_windows has NO Windows implementation in the version
+          #    your pubspec.yaml pins (11.x). Flutter's tooling generates a symlink pointer
+          #    for it, but the symlink target (the actual windows/ directory) doesn't exist
+          #    on disk. PowerShell's Test-Path sees the symlink and reports true, but CMake
+          #    follows the symlink and correctly reports the directory is missing.
+          #
+          #    FIX OPTIONS (pick one long-term):
+          #      A) Remove permission_handler from pubspec.yaml if you don't need it on Windows
+          #      B) Add a platform guard in your Dart code: `if (!Platform.isWindows) ...`
+          #         and keep this CMake patch to skip the broken plugin registration.
+          #
+          $generatedPlugins = "windows\flutter\generated_plugins.cmake"
+          if (Test-Path $generatedPlugins) {
+            $original = Get-Content $generatedPlugins -Raw
+            # Remove every line that references permission_handler_windows
+            $patched = ($original -split "`r?`n" |
+              Where-Object { $_ -notmatch 'permission_handler_windows' }) -join "`n"
+            Set-Content $generatedPlugins $patched -NoNewline
+            Write-Host "✅ Patched generated_plugins.cmake"
+            Write-Host "--- Contents after patch ---"
+            Get-Content $generatedPlugins
+            Write-Host "---------------------------"
+          } else {
+            throw "generated_plugins.cmake not found at $generatedPlugins"
           }
-          Write-Host "✅ Plugin dir confirmed: $pluginDir"
 
-          # 8. Build Windows app
+          # 6. Build Windows app
           Write-Host "==> Running flutter build windows..."
           flutter build windows --release
 
-          # 9. Search for the output EXE
+          # 7. Find the output EXE
           Write-Host "==> Searching for EXE..."
           $exe = Get-ChildItem -Recurse "build\windows" -Filter "bluetooth_chat.exe" |
                  Where-Object { $_.FullName -match "Release" } |
                  Select-Object -First 1
 
           if (!$exe) {
-            Write-Host "❌ EXE not found. Listing build directory for debug:"
+            Write-Host "❌ EXE not found. Listing build directory:"
             Get-ChildItem -Recurse "build\windows" | Select-Object FullName
             throw "Build failed: Executable not found."
           }
