@@ -24,17 +24,18 @@ jobs:
       - name: 📦 Install Dependencies
         run: |
           flutter pub get
-          # Force generation of ios/Flutter/Generated.xcconfig
+          # Generate essential iOS config files
           flutter build ios --config-only --no-codesign
           cd ios
           pod install
         working-directory: .
 
-      - name: 🔓 Bypass Apple Signing
-        # This script removes the "Team ID" requirement from the project file
+      - name: 🔓 Bypass Apple Signing Requirements
+        # This removes the Development Team and Provisioning requirements from the project file
         run: |
           sed -i '' 's/DEVELOPMENT_TEAM = [^;]*;//g' ios/Runner.xcodeproj/project.pbxproj
           sed -i '' 's/PROVISIONING_PROFILE_SPECIFIER = [^;]*;//g' ios/Runner.xcodeproj/project.pbxproj
+          sed -i '' 's/CODE_SIGN_STYLE = Automatic;//g' ios/Runner.xcodeproj/project.pbxproj
 
       - name: 🏗️ Build iOS (Unsigned)
         run: |
@@ -60,6 +61,5 @@ jobs:
           body: |
             ## 🔒 BT SecureChat Release
             - **Status:** Unsigned (Ready for Sideloading)
-            - **Build Number:** ${{ github.run_number }}
-            - **SDK Requirement:** iOS 13.0+
             - **Instructions:** Install using AltStore, Sideloadly, or TrollStore.
+            - **Build ID:** ${{ github.run_number }}
