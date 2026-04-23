@@ -3,47 +3,61 @@ name: iOS-ipa-build
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-ios:
-    name: 🎉 iOS Build
+    name: 🎉 iOS Release Build
     runs-on: macos-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Setup Flutter
+      - name: 🛠️ Setup Flutter
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: '3.22.2'
           channel: 'stable'
-          architecture: x64
+          cache: true
 
-      - name: Install dependencies
-        run: flutter pub get
+      - name: 📦 Install Dependencies
+        run: |
+          flutter pub get
+          cd ios
+          pod install
+        working-directory: .
 
-      - name: Setup CocoaPods
-        run: pod repo update
-        working-directory: ios
+      - name: 🔓 Bypass Apple Signing
+        # This script removes the "Team ID" requirement from the project file
+        run: |
+          sed -i '' 's/DEVELOPMENT_TEAM = [^;]*;//g' ios/Runner.xcodeproj/project.pbxproj
+          sed -i '' 's/PROVISIONING_PROFILE_SPECIFIER = [^;]*;//g' ios/Runner.xcodeproj/project.pbxproj
 
-      - name: Build iOS app
-        run: flutter build ios --release --no-codesign
+      - name: 🏗️ Build iOS (Unsigned)
+        run: |
+          flutter build ios --release --no-codesign \
+            --build-number=${{ github.run_number }} \
+            --build-name=1.1.${{ github.run_number }}
 
-      - name: Create Payload directory
-        run: mkdir -p Payload
-        working-directory: build/ios/iphoneos
-
-      - name: Move Runner.app to Payload
-        run: mv Runner.app Payload/
-        working-directory: build/ios/iphoneos
-
-      - name: Create IPA file
-        run: zip -qq -r -9 FlutterIpaExport.ipa Payload
-        working-directory: build/ios/iphoneos
-
-      - name: Upload IPA to GitHub Releases
+      - name: 📦 Package IPA for Sideloading
+        run: |
+          cd build/ios/iphoneos
+          mkdir Payload
+          cp -r Runner.app Payload/
+          zip -qq -r -9 BT-SecureChat.ipa Payload
+          
+      - name: 🚀 Upload to GitHub Releases
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: build/ios/iphoneos/FlutterIpaExport.ipa
-          tag: v1.0
+          file: build/ios/iphoneos/BT-SecureChat.ipa
+          asset_name: BT-SecureChat-v1.1.${{ github.run_number }}.ipa
+          tag: v1.1.${{ github.run_number }}
           overwrite: true
-          body: "This is the first release"
+          body: |
+            ## 🔒 BT SecureChat Release
+            - **Status:** Unsigned (Ready for Sideloading)
+            - **Build Number:** ${{ github.run_number }}
+            - **SDK Requirement:** iOS 13.0+
+            - **Instructions:** Install using AltStore, Sideloadly, or TrollStore.
