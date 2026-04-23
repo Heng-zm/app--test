@@ -19,8 +19,7 @@ jobs:
         uses: actions/checkout@v4
 
       # ──────────────────────────────────────────────────────────────────
-      # 2. Flutter — same version as iOS workflow (3.27.4)
-      #    Required for Color.withValues() support
+      # 2. Flutter 3.27.4 — required for Color.withValues()
       # ──────────────────────────────────────────────────────────────────
       - name: 🛠️ Setup Flutter
         uses: subosito/flutter-action@v2
@@ -30,7 +29,7 @@ jobs:
           cache: true
 
       # ──────────────────────────────────────────────────────────────────
-      # 3. Enable Windows desktop target
+      # 3. Enable Windows desktop support
       # ──────────────────────────────────────────────────────────────────
       - name: 🖥️ Enable Flutter Windows desktop
         run: flutter config --enable-windows-desktop
@@ -42,14 +41,56 @@ jobs:
         run: flutter pub get
 
       # ──────────────────────────────────────────────────────────────────
-      # 5. Generate Hive adapters (hive_generator in your pubspec.yaml)
+      # 5. Create the windows/ folder if it doesn't exist in the repo.
+      #    Your repo was created without `flutter create --platforms=windows`
+      #    so the windows/ directory is missing. `flutter create .` adds it
+      #    without touching any of your existing Dart source files.
+      # ──────────────────────────────────────────────────────────────────
+      - name: 🪟 Initialize Windows desktop project
+        shell: pwsh
+        run: |
+          if (!(Test-Path "windows")) {
+            Write-Host "windows/ folder not found — creating it now..."
+            flutter create --platforms=windows .
+            Write-Host "✅ windows/ folder created."
+          } else {
+            Write-Host "✅ windows/ folder already exists — skipping."
+          }
+
+      # ──────────────────────────────────────────────────────────────────
+      # 6. Patch the Windows runner app name & company in CMakeLists.txt
+      #    flutter create uses generic placeholder values — we fix them here
+      # ──────────────────────────────────────────────────────────────────
+      - name: ✏️ Patch Windows app metadata
+        shell: pwsh
+        run: |
+          $cmake = "windows\runner\CMakeLists.txt"
+          if (Test-Path $cmake) {
+            (Get-Content $cmake) `
+              -replace 'set\(BINARY_NAME ".*"\)',   'set(BINARY_NAME "bluetooth_chat")' `
+              -replace 'set\(APPLICATION_ID ".*"\)', 'set(APPLICATION_ID "com.kimheng.btsecurechat")' |
+            Set-Content $cmake
+            Write-Host "✅ CMakeLists.txt patched."
+          }
+
+          $mainCpp = "windows\runner\main.cpp"
+          if (Test-Path $mainCpp) {
+            (Get-Content $mainCpp) `
+              -replace '"flutter_windows_example"', '"BT SecureChat"' `
+              -replace '"Flutter Windows Example"',  '"BT SecureChat"' |
+            Set-Content $mainCpp
+            Write-Host "✅ main.cpp patched."
+          }
+
+      # ──────────────────────────────────────────────────────────────────
+      # 7. Generate Hive adapters (hive_generator in your pubspec.yaml)
       # ──────────────────────────────────────────────────────────────────
       - name: ⚙️ Run build_runner (Hive code generation)
         run: flutter pub run build_runner build --delete-conflicting-outputs
 
       # ──────────────────────────────────────────────────────────────────
-      # 6. Build Windows release
-      #    Output lands in: build\windows\x64\runner\Release\
+      # 8. Build Windows release
+      #    Output: build\windows\x64\runner\Release\
       # ──────────────────────────────────────────────────────────────────
       - name: 🏗️ Build Windows app
         run: |
@@ -58,37 +99,54 @@ jobs:
             --build-name=1.1.${{ github.run_number }}
 
       # ──────────────────────────────────────────────────────────────────
-      # 7. Install NSIS for installer creation
-      #    NSIS produces a standard Windows setup .exe (no code signing
-      #    required, works as a portable installer)
+      # 9. Verify build output exists before packaging
+      # ──────────────────────────────────────────────────────────────────
+      - name: ✅ Verify build output
+        shell: pwsh
+        run: |
+          $releaseDir = "build\windows\x64\runner\Release"
+          if (!(Test-Path $releaseDir)) {
+            Write-Host "❌ Release folder not found at: $releaseDir"
+            Write-Host "Listing build\ tree:"
+            Get-ChildItem -Recurse build\ -ErrorAction SilentlyContinue | Select-Object FullName
+            exit 1
+          }
+          $exe = Get-ChildItem "$releaseDir\*.exe" | Select-Object -First 1
+          if (!$exe) {
+            Write-Host "❌ No .exe found in $releaseDir"
+            exit 1
+          }
+          Write-Host "✅ Found: $($exe.FullName)"
+
+      # ──────────────────────────────────────────────────────────────────
+      # 10. Install NSIS
       # ──────────────────────────────────────────────────────────────────
       - name: 📥 Install NSIS
         run: choco install nsis --yes
 
       # ──────────────────────────────────────────────────────────────────
-      # 8. Write the NSIS installer script
-      #    Creates a professional setup wizard that:
-      #      - Installs to Program Files\BT SecureChat
-      #      - Creates a Start Menu shortcut
-      #      - Creates a Desktop shortcut
-      #      - Includes an uninstaller
+      # 11. Write NSIS installer script
+      #     Produces a setup wizard with:
+      #       • Install to Program Files\BT SecureChat
+      #       • Start Menu shortcut
+      #       • Desktop shortcut
+      #       • Uninstaller registered in Add/Remove Programs
       # ──────────────────────────────────────────────────────────────────
       - name: 📝 Generate NSIS installer script
         shell: pwsh
         run: |
           $version = "1.1.${{ github.run_number }}"
-          $script = @"
+          $script = @'
           Unicode true
           !define APP_NAME      "BT SecureChat"
-          !define APP_VERSION   "$version"
+          !define APP_VERSION   "APP_VER_PLACEHOLDER"
           !define APP_EXE       "bluetooth_chat.exe"
-          !define INSTALL_DIR   "`$PROGRAMFILES64\BT SecureChat"
-          !define UNINSTALLER   "Uninstall.exe"
+          !define INSTALL_DIR   "$PROGRAMFILES64\BT SecureChat"
           !define BUILD_DIR     "build\windows\x64\runner\Release"
 
-          Name            "`${APP_NAME} `${APP_VERSION}"
-          OutFile         "BT-SecureChat-Setup-v$version.exe"
-          InstallDir      "`${INSTALL_DIR}"
+          Name            "${APP_NAME} ${APP_VERSION}"
+          OutFile         "BT-SecureChat-Setup-vAPP_VER_PLACEHOLDER.exe"
+          InstallDir      "${INSTALL_DIR}"
           InstallDirRegKey HKLM "Software\BT SecureChat" "Install_Dir"
           RequestExecutionLevel admin
           SetCompressor    lzma
@@ -97,56 +155,46 @@ jobs:
           Page instfiles
 
           Section "Install"
-            SetOutPath "`$INSTDIR"
+            SetOutPath "$INSTDIR"
+            File /r "${BUILD_DIR}\*.*"
 
-            ; Copy entire Release folder contents (app + all DLLs + data/)
-            File /r "`${BUILD_DIR}\*.*"
+            WriteUninstaller "$INSTDIR\Uninstall.exe"
 
-            ; Write uninstaller
-            WriteUninstaller "`$INSTDIR\`${UNINSTALLER}"
+            CreateDirectory "$SMPROGRAMS\BT SecureChat"
+            CreateShortcut  "$SMPROGRAMS\BT SecureChat\BT SecureChat.lnk" "$INSTDIR\${APP_EXE}"
+            CreateShortcut  "$SMPROGRAMS\BT SecureChat\Uninstall.lnk"     "$INSTDIR\Uninstall.exe"
+            CreateShortcut  "$DESKTOP\BT SecureChat.lnk"                  "$INSTDIR\${APP_EXE}"
 
-            ; Start Menu shortcut
-            CreateDirectory "`$SMPROGRAMS\BT SecureChat"
-            CreateShortcut  "`$SMPROGRAMS\BT SecureChat\BT SecureChat.lnk" "`$INSTDIR\`${APP_EXE}"
-            CreateShortcut  "`$SMPROGRAMS\BT SecureChat\Uninstall.lnk"     "`$INSTDIR\`${UNINSTALLER}"
-
-            ; Desktop shortcut
-            CreateShortcut "`$DESKTOP\BT SecureChat.lnk" "`$INSTDIR\`${APP_EXE}"
-
-            ; Add/Remove Programs registry entry
-            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\BT SecureChat" \
-              "DisplayName"    "BT SecureChat"
-            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\BT SecureChat" \
-              "UninstallString" "`$INSTDIR\`${UNINSTALLER}"
-            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\BT SecureChat" \
-              "DisplayVersion" "`${APP_VERSION}"
-            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\BT SecureChat" \
-              "Publisher"      "BT SecureChat"
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\BT SecureChat" "DisplayName"     "BT SecureChat"
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\BT SecureChat" "UninstallString" "$INSTDIR\Uninstall.exe"
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\BT SecureChat" "DisplayVersion"  "${APP_VERSION}"
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\BT SecureChat" "Publisher"       "BT SecureChat"
           SectionEnd
 
           Section "Uninstall"
-            RMDir /r "`$INSTDIR"
-            Delete "`$SMPROGRAMS\BT SecureChat\BT SecureChat.lnk"
-            Delete "`$SMPROGRAMS\BT SecureChat\Uninstall.lnk"
-            RMDir  "`$SMPROGRAMS\BT SecureChat"
-            Delete "`$DESKTOP\BT SecureChat.lnk"
+            RMDir  /r "$INSTDIR"
+            Delete "$SMPROGRAMS\BT SecureChat\BT SecureChat.lnk"
+            Delete "$SMPROGRAMS\BT SecureChat\Uninstall.lnk"
+            RMDir  "$SMPROGRAMS\BT SecureChat"
+            Delete "$DESKTOP\BT SecureChat.lnk"
             DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\BT SecureChat"
             DeleteRegKey HKLM "Software\BT SecureChat"
           SectionEnd
-          "@
+          '@
 
+          # Substitute version placeholder safely (avoids $ interpolation issues)
+          $script = $script -replace 'APP_VER_PLACEHOLDER', $version
           $script | Out-File -FilePath "installer.nsi" -Encoding UTF8
-          Write-Host "✅ NSIS script written."
+          Write-Host "✅ NSIS script written for version $version"
 
       # ──────────────────────────────────────────────────────────────────
-      # 9. Compile the NSIS installer → produces Setup .exe
+      # 12. Compile NSIS installer
       # ──────────────────────────────────────────────────────────────────
       - name: 🔨 Compile NSIS installer
         run: makensis installer.nsi
 
       # ──────────────────────────────────────────────────────────────────
-      # 10. Also zip the portable build (no install required)
-      #     Some users prefer to just unzip and run
+      # 13. Package portable ZIP (unzip and run, no install needed)
       # ──────────────────────────────────────────────────────────────────
       - name: 📦 Package portable ZIP
         shell: pwsh
@@ -155,10 +203,11 @@ jobs:
           $src  = "build\windows\x64\runner\Release"
           $dest = "BT-SecureChat-Portable-v$version.zip"
           Compress-Archive -Path "$src\*" -DestinationPath $dest
-          Write-Host "✅ Portable ZIP: $dest ($('{0:N2}' -f ((Get-Item $dest).Length / 1MB)) MB)"
+          $sizeMB = '{0:N2}' -f ((Get-Item $dest).Length / 1MB)
+          Write-Host "✅ Portable ZIP: $dest ($sizeMB MB)"
 
       # ──────────────────────────────────────────────────────────────────
-      # 11. Upload Setup installer to GitHub Releases
+      # 14. Upload Setup installer to GitHub Releases
       # ──────────────────────────────────────────────────────────────────
       - name: 🚀 Upload Setup EXE to GitHub Releases
         uses: svenstaro/upload-release-action@v2
@@ -181,7 +230,7 @@ jobs:
             ### Downloads
             | File | Description |
             |---|---|
-            | `BT-SecureChat-Setup-*.exe` | Standard installer (recommended) |
+            | `BT-SecureChat-Setup-*.exe` | Installer — Start Menu + Desktop shortcuts + uninstaller |
             | `BT-SecureChat-Portable-*.zip` | Portable — unzip and run, no install needed |
 
             ### Requirements
@@ -189,7 +238,7 @@ jobs:
             - No additional runtime required
 
       # ──────────────────────────────────────────────────────────────────
-      # 12. Upload Portable ZIP to GitHub Releases
+      # 15. Upload Portable ZIP to GitHub Releases
       # ──────────────────────────────────────────────────────────────────
       - name: 🚀 Upload Portable ZIP to GitHub Releases
         uses: svenstaro/upload-release-action@v2
