@@ -28,7 +28,7 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: 🏗️ Prepare, Patch & Manual Build
+      - name: 🏗️ Prepare, Patch & Build
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -39,48 +39,21 @@ jobs:
           flutter pub get
           flutter pub run build_runner build --delete-conflicting-outputs
 
-          # 2. Patch CMakeLists.txt (Binary Name)
+          # 2. Patch CMakeLists.txt (Binary Name & App ID)
           $cmakeMain = "windows\runner\CMakeLists.txt"
           (Get-Content $cmakeMain) `
             -replace 'set\(BINARY_NAME "[^"]*"\)',    'set(BINARY_NAME "bluetooth_chat")' `
             -replace 'set\(APPLICATION_ID "[^"]*"\)', 'set(APPLICATION_ID "com.kimheng.btsecurechat")' |
           Set-Content $cmakeMain
 
-          # 3. Generate Build Files
-          $buildDir = "build/windows/x64"
-          if (!(Test-Path $buildDir)) { New-Item -ItemType Directory -Force -Path $buildDir }
-          
-          Write-Host "==> Generating CMake project..."
-          cmake -S windows -B $buildDir -G "Visual Studio 17 2022" -A x64 -DFLUTTER_TARGET_PLATFORM=windows-x64
+          # 3. Build Windows App
+          Write-Host "==> Running flutter build windows..."
+          flutter build windows --release
 
-          # 4. Patch plugins (The Symlink Fix)
-          $genPlugins = "windows\flutter\ephemeral\generated_plugins.cmake"
-          $pubCache = "$env:LOCALAPPDATA\Pub\Cache\hosted\pub.dev"
-          Write-Host "Using Pub Cache: $pubCache"
-          
-          if (Test-Path $genPlugins) {
-            $content = Get-Content $genPlugins -Raw
-            $pluginRefs = [regex]::Matches($content, '\.plugin_symlinks[/\\]([^/\\"]+)')
-            foreach ($match in $pluginRefs) {
-              $pluginName = $match.Groups[1].Value
-              $pluginDir = Get-ChildItem $pubCache -Directory | Where-Object { $_.Name -like "$pluginName-*" } | Sort-Object Name -Descending | Select-Object -First 1
-              if ($pluginDir) {
-                $realPath = $pluginDir.FullName.Replace('\', '/')
-                $content = $content -replace [regex]::Escape(".plugin_symlinks/$pluginName"), $realPath
-                $content = $content -replace [regex]::Escape(".plugin_symlinks\$pluginName"), $realPath
-                Write-Host "   -> Mapped $pluginName"
-              }
-            }
-            $content | Set-Content $genPlugins -NoNewline
-          }
-
-          # 5. Build
-          cmake --build $buildDir --config Release
-
-          # 6. HEAVY DUTY EXE SEARCH
+          # 4. Search for EXE
           Write-Host "==> Searching for EXE..."
-          $exe = Get-ChildItem -Recurse "build\windows" -Filter "*.exe" | 
-                 Where-Object { $_.FullName -match "Release" -and $_.Name -notmatch "Uninstall" -and $_.FullName -notmatch "CMakeFiles" } | 
+          $exe = Get-ChildItem -Recurse "build\windows" -Filter "bluetooth_chat.exe" | 
+                 Where-Object { $_.FullName -match "Release" } | 
                  Select-Object -First 1
 
           if (!$exe) {
@@ -137,7 +110,7 @@ jobs:
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: BT-SecureChat-*
+          file: BT-SecureChat-Setup-v*
           file_glob: true
           tag: v1.1.${{ github.run_number }}
           overwrite: true
