@@ -5,7 +5,6 @@ import '../services/bluetooth_service.dart';
 import '../models/message_model.dart';
 import '../theme/app_theme.dart';
 import '../widgets/glow_container.dart';
-import 'home_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -15,38 +14,18 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
-  final _controller   = TextEditingController();
-  final _scrollCtrl   = ScrollController();
-  final _focusNode    = FocusNode();
-  bool  _showEncrypted = false;
-  int   _prevCount     = 0;
+  final TextEditingController _controller = TextEditingController();
+  final ScrollController _scrollCtrl = ScrollController();
+  final FocusNode _focusNode = FocusNode();
+
+  bool _showEncrypted = false;
+  int _lastMsgCount = 0;
 
   @override
   void initState() {
     super.initState();
-    // Use post-frame callback to avoid calling setState during build
-    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final service = context.read<BluetoothService>();
-    // Scroll whenever the message count grows
-    if (service.messages.length != _prevCount) {
-      _prevCount = service.messages.length;
-      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
-    }
-  }
-
-  void _scrollToBottom() {
-    if (_scrollCtrl.hasClients) {
-      _scrollCtrl.animateTo(
-        _scrollCtrl.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 250),
-        curve: Curves.easeOut,
-      );
-    }
+    // Initialize view at the bottom
+    _scrollToBottom(animated: false);
   }
 
   @override
@@ -57,110 +36,130 @@ class _ChatScreenState extends State<ChatScreen> {
     super.dispose();
   }
 
+  /// Handles smooth scrolling to the bottom of the message list
+  void _scrollToBottom({bool animated = true}) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollCtrl.hasClients) {
+        if (animated) {
+          _scrollCtrl.animateTo(
+            _scrollCtrl.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOutCubic,
+          );
+        } else {
+          _scrollCtrl.jumpTo(_scrollCtrl.position.maxScrollExtent);
+        }
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
+    // Standard Tablet/Desktop breakpoint
+    final bool isWide = MediaQuery.of(context).size.width >= 720;
+
     return Consumer<BluetoothService>(
       builder: (context, service, _) {
-        // Redirect to home if disconnected
-        if (!service.isConnected &&
-            service.state == BtConnectionState.disconnected) {
+        // 1. Auto-scroll logic: Trigger whenever the message list updates
+        if (service.messages.length != _lastMsgCount) {
+          _lastMsgCount = service.messages.length;
+          _scrollToBottom();
+        }
+
+        // 2. Lifecycle logic: On mobile, pop back to home if connection is lost
+        if (!service.isConnected && !isWide) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) {
-              Navigator.pushReplacement(context,
-                  MaterialPageRoute(builder: (_) => const HomeScreen()));
+            if (mounted && Navigator.canPop(context)) {
+              Navigator.pop(context);
             }
           });
         }
 
-        // Auto-scroll on new messages
-        if (service.messages.length != _prevCount) {
-          _prevCount = service.messages.length;
-          WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
-        }
-
         return Scaffold(
           backgroundColor: AppTheme.bgDeep,
-          // resizeToAvoidBottomInset keeps chat above the keyboard
           resizeToAvoidBottomInset: true,
-          appBar: _buildAppBar(context, service),
-          body: Column(children: [
-            _buildEncBadge(service),
-            Expanded(child: _buildMessages(service)),
-            _buildInputBar(service),
-          ]),
+          appBar: _buildAppBar(context, service, isWide),
+          body: Column(
+            children: [
+              _buildSecurityStatusHeader(),
+              Expanded(
+                child: service.messages.isEmpty
+                    ? _buildEmptyState()
+                    : _buildMessageList(service.messages),
+              ),
+              _buildInputArea(service),
+            ],
+          ),
         );
       },
     );
   }
 
   // ── AppBar ──────────────────────────────────────────────────────────────
-  PreferredSizeWidget _buildAppBar(BuildContext ctx, BluetoothService svc) {
+
+  PreferredSizeWidget _buildAppBar(
+      BuildContext context, BluetoothService service, bool isWide) {
     return AppBar(
       backgroundColor: AppTheme.bgDeep,
-      leading: IconButton(
-        icon: const Icon(Icons.arrow_back_ios, color: AppTheme.accentCyan, size: 17),
-        onPressed: () async {
-          await svc.disconnect();
-          if (ctx.mounted) {
-            Navigator.pushReplacement(ctx,
-                MaterialPageRoute(builder: (_) => const HomeScreen()));
-          }
-        },
-      ),
-      title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(svc.connectedDeviceName ?? 'Device',
-            style: const TextStyle(
-                color: AppTheme.textPrimary, fontSize: 14, fontWeight: FontWeight.bold)),
-        Row(children: [
-          Container(width: 5, height: 5,
-              decoration: const BoxDecoration(shape: BoxShape.circle, color: AppTheme.accentGreen)),
-          const SizedBox(width: 5),
+      elevation: 0,
+      centerTitle: false,
+      // On wide screens (tablets), hide the back button as the chat is a side-panel
+      leading: isWide
+          ? null
+          : IconButton(
+              icon: const Icon(Icons.arrow_back_ios_new,
+                  color: AppTheme.accentCyan, size: 20),
+              onPressed: () => Navigator.maybePop(context),
+            ),
+      title: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
           Text(
-            svc.connectedDeviceAddress != null
-                ? 'CONNECTED · ${_shortAddr(svc.connectedDeviceAddress!)}'
-                : 'CONNECTED',
-            style: const TextStyle(color: AppTheme.accentGreen, fontSize: 9,
-                fontWeight: FontWeight.bold, letterSpacing: 1),
+            service.connectedDeviceName ?? 'Secure Session',
+            style: const TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.bold,
+                color: AppTheme.textPrimary),
           ),
-        ]),
-      ]),
+          Row(
+            children: [
+              Container(
+                width: 6,
+                height: 6,
+                decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: service.isConnected
+                        ? AppTheme.accentGreen
+                        : AppTheme.danger),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                service.isConnected ? 'ENCRYPTED' : 'DISCONNECTED',
+                style: TextStyle(
+                    fontSize: 9,
+                    color: service.isConnected
+                        ? AppTheme.accentGreen
+                        : AppTheme.danger,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 1.2),
+              ),
+            ],
+          ),
+        ],
+      ),
       actions: [
         IconButton(
-          icon: Icon(_showEncrypted ? Icons.lock_open : Icons.lock,
-              color: _showEncrypted ? AppTheme.warning : AppTheme.textSecondary,
-              size: 19),
+          icon: Icon(
+            _showEncrypted
+                ? Icons.enhanced_encryption
+                : Icons.no_encryption_gmailerrorred,
+            color: _showEncrypted ? AppTheme.accentCyan : AppTheme.textDim,
+            size: 20,
+          ),
           onPressed: () => setState(() => _showEncrypted = !_showEncrypted),
-          tooltip: _showEncrypted ? 'Hide ciphertext' : 'Show ciphertext',
+          tooltip: 'Toggle Ciphertext View',
         ),
-        PopupMenuButton<String>(
-          icon: const Icon(Icons.more_vert, color: AppTheme.textSecondary, size: 19),
-          color: AppTheme.bgCard,
-          onSelected: (v) async {
-            if (v == 'clear') {
-              svc.clearMessages();
-            } else if (v == 'disconnect') {
-              await svc.disconnect();
-              if (ctx.mounted) {
-                Navigator.pushReplacement(ctx,
-                    MaterialPageRoute(builder: (_) => const HomeScreen()));
-              }
-            }
-          },
-          itemBuilder: (_) => [
-            const PopupMenuItem(value: 'clear',
-                child: Row(children: [
-                  Icon(Icons.delete_outline, color: AppTheme.textSecondary, size: 17),
-                  SizedBox(width: 10),
-                  Text('Clear messages', style: TextStyle(color: AppTheme.textPrimary)),
-                ])),
-            const PopupMenuItem(value: 'disconnect',
-                child: Row(children: [
-                  Icon(Icons.bluetooth_disabled, color: AppTheme.danger, size: 17),
-                  SizedBox(width: 10),
-                  Text('Disconnect', style: TextStyle(color: AppTheme.danger)),
-                ])),
-          ],
-        ),
+        _buildPopupMenu(service),
       ],
       bottom: PreferredSize(
         preferredSize: const Size.fromHeight(1),
@@ -169,277 +168,280 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  // ── Encryption badge ─────────────────────────────────────────────────────
-  Widget _buildEncBadge(BluetoothService svc) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-      color: AppTheme.bgSurface,
-      child: Row(children: [
-        const Icon(Icons.shield, color: AppTheme.accentGreen, size: 13),
-        const SizedBox(width: 7),
-        const Text('End-to-end encrypted · AES-256 · Random IV',
-            style: TextStyle(color: AppTheme.accentGreen, fontSize: 10, fontWeight: FontWeight.w500)),
-        const Spacer(),
-        GestureDetector(
-          onTap: () => setState(() => _showEncrypted = !_showEncrypted),
-          child: Text(_showEncrypted ? 'HIDE CIPHER' : 'VIEW CIPHER',
-              style: const TextStyle(color: AppTheme.accentCyan, fontSize: 9,
-                  fontWeight: FontWeight.bold, letterSpacing: 1)),
-        ),
-      ]),
-    );
-  }
-
-  // ── Message list ─────────────────────────────────────────────────────────
-  Widget _buildMessages(BluetoothService svc) {
-    if (svc.messages.isEmpty) return _buildEmptyState();
-
-    return ListView.builder(
-      controller: _scrollCtrl,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      // Keep ListView from blocking input events when scrolling near the bottom
-      physics: const ClampingScrollPhysics(),
-      itemCount: svc.messages.length,
-      itemBuilder: (_, i) {
-        final msg  = svc.messages[i];
-        final prev = i > 0 ? svc.messages[i - 1] : null;
-        final showHeader = prev == null ||
-            msg.timestamp.difference(prev.timestamp).inMinutes >= 5 ||
-            msg.dateString != prev.dateString;
-        return Column(children: [
-          if (showHeader) _buildTimeDivider(msg),
-          _buildBubble(msg),
-        ]);
+  Widget _buildPopupMenu(BluetoothService service) {
+    return PopupMenuButton<String>(
+      icon: const Icon(Icons.more_vert, color: AppTheme.textSecondary),
+      color: AppTheme.bgCard,
+      onSelected: (val) {
+        if (val == 'clear') {
+          service.clearMessages();
+        }
+        if (val == 'disconnect') {
+          service.disconnect();
+        }
       },
+      itemBuilder: (context) => [
+        const PopupMenuItem(
+          value: 'clear',
+          child: Row(children: [
+            Icon(Icons.delete_sweep_outlined,
+                color: AppTheme.textSecondary, size: 18),
+            SizedBox(width: 12),
+            Text('Clear session logs',
+                style: TextStyle(color: AppTheme.textPrimary)),
+          ]),
+        ),
+        const PopupMenuItem(
+          value: 'disconnect',
+          child: Row(children: [
+            Icon(Icons.link_off, color: AppTheme.danger, size: 18),
+            SizedBox(width: 12),
+            Text('Disconnect Link', style: TextStyle(color: AppTheme.danger)),
+          ]),
+        ),
+      ],
     );
   }
 
-  Widget _buildEmptyState() {
-    return Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-      Container(
-        width: 72, height: 72,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle, color: AppTheme.bgCard,
-          border: Border.all(color: AppTheme.borderGlow),
-        ),
-        child: const Icon(Icons.lock_outline, color: AppTheme.accentCyan, size: 32),
-      ),
-      const SizedBox(height: 16),
-      const Text('SECURE CHANNEL OPEN',
-          style: TextStyle(color: AppTheme.accentCyan, fontSize: 11,
-              fontWeight: FontWeight.bold, letterSpacing: 2)),
-      const SizedBox(height: 6),
-      const Text('Messages are AES-256 encrypted before sending',
-          style: TextStyle(color: AppTheme.textDim, fontSize: 11)),
-    ]));
-  }
+  // ── Body Components ──────────────────────────────────────────────────────
 
-  Widget _buildTimeDivider(Message msg) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 10),
-      child: Row(children: [
-        const Expanded(child: Divider(color: AppTheme.borderGlow, height: 1)),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: Text('${msg.dateString}  ${msg.timeString}',
-              style: const TextStyle(color: AppTheme.textDim, fontSize: 9, letterSpacing: 1)),
-        ),
-        const Expanded(child: Divider(color: AppTheme.borderGlow, height: 1)),
-      ]),
-    );
-  }
-
-  Widget _buildBubble(Message msg) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 7),
-      child: Row(
-        mainAxisAlignment: msg.isMine ? MainAxisAlignment.end : MainAxisAlignment.start,
-        crossAxisAlignment: CrossAxisAlignment.end,
+  Widget _buildSecurityStatusHeader() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+      color: AppTheme.bgSurface,
+      child: const Row(
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          if (!msg.isMine) ...[
-            _avatar(false),
-            const SizedBox(width: 7),
-          ],
-          Flexible(
-            child: GestureDetector(
-              onLongPress: () => _copy(msg.text),
-              child: Column(
-                crossAxisAlignment:
-                    msg.isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    constraints: BoxConstraints(
-                        maxWidth: MediaQuery.of(context).size.width * 0.72),
-                    padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(14).copyWith(
-                        bottomRight: msg.isMine ? const Radius.circular(3) : null,
-                        bottomLeft: !msg.isMine ? const Radius.circular(3) : null,
-                      ),
-                      gradient: msg.isMine
-                          ? const LinearGradient(
-                              colors: [Color(0xFF0A3D62), Color(0xFF0C2E4D)])
-                          : null,
-                      color: msg.isMine ? null : AppTheme.theirBubble,
-                      border: Border.all(
-                        color: msg.isMine
-                            ? AppTheme.accentCyan.withOpacity(0.22)
-                            : AppTheme.borderGlow,
-                      ),
-                      boxShadow: msg.isMine
-                          ? [BoxShadow(color: AppTheme.accentCyan.withOpacity(0.08),
-                              blurRadius: 8, offset: const Offset(0, 2))]
-                          : null,
-                    ),
-                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      if (msg.isDecryptionError)
-                        Row(mainAxisSize: MainAxisSize.min, children: [
-                          const Icon(Icons.warning_amber, color: AppTheme.warning, size: 13),
-                          const SizedBox(width: 5),
-                          Flexible(child: Text(msg.text,
-                              style: const TextStyle(color: AppTheme.warning,
-                                  fontSize: 13, fontStyle: FontStyle.italic))),
-                        ])
-                      else
-                        Text(msg.text,
-                            style: const TextStyle(color: AppTheme.textPrimary,
-                                fontSize: 14, height: 1.4)),
-                      if (_showEncrypted) ...[
-                        const SizedBox(height: 5),
-                        Container(
-                          padding: const EdgeInsets.all(5),
-                          decoration: BoxDecoration(
-                            color: Colors.black.withOpacity(0.3),
-                            borderRadius: BorderRadius.circular(5),
-                            border: Border.all(color: AppTheme.warning.withOpacity(0.3)),
-                          ),
-                          child: Text(
-                            msg.encryptedText.length > 44
-                                ? '${msg.encryptedText.substring(0, 44)}…'
-                                : msg.encryptedText,
-                            style: const TextStyle(color: AppTheme.warning,
-                                fontSize: 8, fontFamily: 'monospace'),
-                          ),
-                        ),
-                      ],
-                    ]),
-                  ),
-                  const SizedBox(height: 2),
-                  Row(mainAxisSize: MainAxisSize.min, children: [
-                    const Icon(Icons.lock, size: 8, color: AppTheme.textDim),
-                    const SizedBox(width: 3),
-                    Text(msg.timeString,
-                        style: const TextStyle(color: AppTheme.textDim, fontSize: 9)),
-                  ]),
-                ],
-              ),
-            ),
+          Icon(Icons.verified_user, color: AppTheme.accentGreen, size: 12),
+          SizedBox(width: 8),
+          Text(
+            'AES-256-CBC · SECURE CHANNEL ACTIVE',
+            style: TextStyle(
+                color: AppTheme.textDim,
+                fontSize: 8,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 1),
           ),
-          if (msg.isMine) ...[
-            const SizedBox(width: 7),
-            _avatar(true),
-          ],
         ],
       ),
     );
   }
 
-  Widget _avatar(bool isMe) {
-    return Container(
-      width: 26, height: 26,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: isMe ? AppTheme.accentCyan.withOpacity(0.12) : AppTheme.bgCard,
-        border: Border.all(
-            color: isMe ? AppTheme.accentCyan.withOpacity(0.3) : AppTheme.borderGlow),
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.lock_person_outlined,
+              size: 64, color: AppTheme.accentCyan.withOpacity(0.05)),
+          const SizedBox(height: 16),
+          const Text(
+            'Encryption synchronized.\nMessages are end-to-end encrypted.',
+            textAlign: TextAlign.center,
+            style:
+                TextStyle(color: AppTheme.textDim, fontSize: 12, height: 1.5),
+          ),
+        ],
       ),
-      child: Icon(isMe ? Icons.person : Icons.bluetooth,
-          size: 13, color: isMe ? AppTheme.accentCyan : AppTheme.textSecondary),
     );
   }
 
-  // ── Input bar ────────────────────────────────────────────────────────────
-  Widget _buildInputBar(BluetoothService svc) {
+  Widget _buildMessageList(List<Message> messages) {
+    return ListView.builder(
+      controller: _scrollCtrl,
+      padding: const EdgeInsets.all(16),
+      itemCount: messages.length,
+      itemBuilder: (context, index) {
+        final msg = messages[index];
+        return _MessageBubble(message: msg, showCipher: _showEncrypted);
+      },
+    );
+  }
+
+  Widget _buildInputArea(BluetoothService service) {
+    final bool canChat = service.isConnected;
+
     return Container(
       padding: EdgeInsets.fromLTRB(
-          12, 8, 12, MediaQuery.of(context).viewInsets.bottom > 0 ? 8 : 18),
+          16, 8, 16, MediaQuery.of(context).padding.bottom + 12),
       decoration: BoxDecoration(
-        color: AppTheme.bgCard,
+        color: AppTheme.bgSurface,
         border: const Border(top: BorderSide(color: AppTheme.borderGlow)),
       ),
-      child: SafeArea(
-        top: false,
-        child: Row(children: [
+      child: Row(
+        children: [
           Expanded(
             child: TextField(
               controller: _controller,
               focusNode: _focusNode,
-              style: const TextStyle(color: AppTheme.textPrimary, fontSize: 14),
-              maxLines: 4,
-              minLines: 1,
+              enabled: canChat,
               textInputAction: TextInputAction.send,
-              onSubmitted: (_) => _send(svc),
+              onSubmitted: (_) => _sendMessage(service),
+              style: const TextStyle(color: AppTheme.textPrimary, fontSize: 14),
               decoration: InputDecoration(
-                hintText: 'Type encrypted message…',
-                hintStyle: const TextStyle(color: AppTheme.textDim, fontSize: 13),
-                prefixIcon: const Icon(Icons.lock_outline, color: AppTheme.textDim, size: 15),
+                hintText:
+                    canChat ? 'Type secure message...' : 'Radio Link Lost',
+                hintStyle: const TextStyle(color: AppTheme.textDim),
+                fillColor: AppTheme.bgDeep,
                 filled: true,
-                fillColor: AppTheme.bgSurface,
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(22),
-                    borderSide: const BorderSide(color: AppTheme.borderGlow)),
-                enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(22),
-                    borderSide: const BorderSide(color: AppTheme.borderGlow)),
-                focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(22),
-                    borderSide: const BorderSide(color: AppTheme.accentCyan, width: 1.5)),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-              ),
-            ),
-          ),
-          const SizedBox(width: 9),
-          GlowContainer(
-            child: GestureDetector(
-              onTap: () => _send(svc),
-              child: Container(
-                width: 44, height: 44,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: const LinearGradient(
-                      begin: Alignment.topLeft, end: Alignment.bottomRight,
-                      colors: [AppTheme.accentCyan, AppTheme.accentTeal]),
-                  boxShadow: [BoxShadow(
-                      color: AppTheme.accentCyan.withOpacity(0.3), blurRadius: 10, spreadRadius: 1)],
+                  borderRadius: BorderRadius.circular(24),
+                  borderSide: BorderSide.none,
                 ),
-                child: const Icon(Icons.send_rounded, color: AppTheme.bgDeep, size: 18),
               ),
             ),
           ),
-        ]),
+          const SizedBox(width: 12),
+          GlowContainer(
+            child: IconButton.filled(
+              onPressed: canChat ? () => _sendMessage(service) : null,
+              icon: const Icon(Icons.send_rounded, size: 20),
+              // Fixed Material 3 styling
+              style: IconButton.styleFrom(
+                backgroundColor:
+                    canChat ? AppTheme.accentCyan : AppTheme.textDim,
+                foregroundColor: AppTheme.bgDeep,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  // ── Actions ──────────────────────────────────────────────────────────────
-  void _send(BluetoothService svc) {
-    if (_controller.text.trim().isEmpty) return;
-    svc.sendMessage(_controller.text);
+  void _sendMessage(BluetoothService service) {
+    final text = _controller.text.trim();
+    if (text.isEmpty) {
+      return;
+    }
+    service.sendMessage(text);
     _controller.clear();
+    // Retain focus for quick replying
     _focusNode.requestFocus();
   }
+}
 
-  void _copy(String text) {
-    Clipboard.setData(ClipboardData(text: text));
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: const Text('Copied to clipboard'),
-      behavior: SnackBarBehavior.floating,
-      backgroundColor: AppTheme.bgCard,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-      duration: const Duration(seconds: 1),
-    ));
+class _MessageBubble extends StatelessWidget {
+  final Message message;
+  final bool showCipher;
+
+  const _MessageBubble({required this.message, required this.showCipher});
+
+  @override
+  Widget build(BuildContext context) {
+    final isMe = message.isMine;
+
+    return Align(
+      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+      child: Column(
+        crossAxisAlignment:
+            isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        children: [
+          GestureDetector(
+            onLongPress: () {
+              Clipboard.setData(ClipboardData(text: message.text));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                    content: Text('Uplink Data Copied'),
+                    duration: Duration(seconds: 1)),
+              );
+            },
+            child: Container(
+              margin: const EdgeInsets.only(bottom: 4, top: 8),
+              constraints: BoxConstraints(
+                  maxWidth: MediaQuery.of(context).size.width * 0.75),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: isMe
+                    ? AppTheme.accentCyan.withOpacity(0.12)
+                    : AppTheme.bgCard,
+                borderRadius: BorderRadius.circular(16).copyWith(
+                  bottomRight: isMe ? const Radius.circular(2) : null,
+                  bottomLeft: !isMe ? const Radius.circular(2) : null,
+                ),
+                border: Border.all(
+                    color: isMe
+                        ? AppTheme.accentCyan.withOpacity(0.3)
+                        : AppTheme.borderGlow),
+              ),
+              child: Column(
+                crossAxisAlignment:
+                    isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                children: [
+                  // Decryption Error Logic
+                  if (message.isDecryptionError)
+                    const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.warning_amber_rounded,
+                            color: AppTheme.warning, size: 14),
+                        SizedBox(width: 6),
+                        Text('DECRYPTION FAILURE',
+                            style: TextStyle(
+                                color: AppTheme.warning,
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                fontStyle: FontStyle.italic)),
+                      ],
+                    )
+                  else
+                    Text(
+                      message.text,
+                      style: const TextStyle(
+                          color: AppTheme.textPrimary,
+                          fontSize: 14,
+                          height: 1.4),
+                    ),
+
+                  // Toggleable Ciphertext View
+                  if (showCipher) ...[
+                    const SizedBox(height: 10),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                          color: Colors.black54,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                              color: AppTheme.warning.withOpacity(0.2))),
+                      child: Text(
+                        message.encryptedText,
+                        style: const TextStyle(
+                            color: AppTheme.warning,
+                            fontSize: 9,
+                            fontFamily: 'monospace'),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+
+          // Metadata Row
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (isMe)
+                  const Icon(Icons.lock, size: 8, color: AppTheme.textDim),
+                if (isMe) const SizedBox(width: 4),
+                Text(
+                  message.timeString,
+                  style: const TextStyle(color: AppTheme.textDim, fontSize: 9),
+                ),
+                if (!isMe) const SizedBox(width: 4),
+                if (!isMe)
+                  const Icon(Icons.lock, size: 8, color: AppTheme.textDim),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
-
-  String _shortAddr(String addr) =>
-      addr.length > 17 ? addr.substring(0, 8) : addr;
 }

@@ -1,51 +1,64 @@
 plugins {
-    id("com.android.application")
-    id("kotlin-android")
-    id("dev.flutter.flutter-gradle-plugin")
+    id "com.android.application"
+    id "kotlin-android"
+    id "dev.flutter.flutter-gradle-plugin"
+}
+
+def localProperties = new Properties()
+def localPropertiesFile = rootProject.file('local.properties')
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.withReader('UTF-8') { reader ->
+        localProperties.load(reader)
+    }
+}
+
+def flutterVersionCode = localProperties.getProperty('flutter.versionCode')
+if (flutterVersionCode == null) {
+    flutterVersionCode = '1'
+}
+
+def flutterVersionName = localProperties.getProperty('flutter.versionName')
+if (flutterVersionName == null) {
+    flutterVersionName = '1.0'
 }
 
 android {
-    // 1. Corrected the spelling typo here and in applicationId
-    namespace = "com.example.bluetoothchat"
+    namespace "com.example.bluetoothchat"
     
-    // Use the latest SDK to support Android 14 (API 34) features
-    compileSdk = 34 
-    ndkVersion = flutter.ndkVersion
+    // FIX: Set compileSdk to 34 for modern plugin support
+    compileSdk 34
+    ndkVersion flutter.ndkVersion
 
     compileOptions {
-        // 2. Upgraded to Java 17 for better plugin compatibility
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+        // FIX: Upgrade to Java 17
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
     }
 
     kotlinOptions {
-        jvmTarget = "17"
+        jvmTarget = '17'
+    }
+
+    sourceSets {
+        main.java.srcDirs += 'src/main/kotlin'
     }
 
     defaultConfig {
-        applicationId = "com.example.bluetoothchat"
-        
-        // 3. Bluetooth hardware access requires at least API 21
-        minSdk = 21 
-        targetSdk = 34
-        
-        versionCode = flutter.versionCode
-        versionName = flutter.versionName
+        applicationId "com.example.bluetoothchat"
+        // FIX: Bluetooth REQUIRES minSdk 21 or higher
+        minSdk 21
+        targetSdk 34
+        versionCode flutterVersionCode.toInteger()
+        versionName flutterVersionName
     }
 
     buildTypes {
         release {
-            // 4. Recommended: Enable shrinking and obfuscation for security
-            // If Bluetooth fails in release mode, you will need to add 
-            // rules to 'proguard-rules.pro'
-            minifyEnabled = false 
-            shrinkResources = false
-            
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig signingConfigs.debug
         }
     }
 }
 
 flutter {
-    source = "../.."
+    source '../..'
 }

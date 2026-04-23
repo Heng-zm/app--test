@@ -1,25 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools"> <!-- Added tools namespace -->
+    xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- 1. Legacy Bluetooth permissions (Android 11 and below) -->
-    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
-    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <!-- 1. Legacy Bluetooth (Android 11 and below) -->
+    <!-- FIX: Added tools:replace to override older plugin conflicts during installation -->
+    <uses-permission android:name="android.permission.BLUETOOTH" 
+                     android:maxSdkVersion="30" 
+                     tools:replace="android:maxSdkVersion" />
+                     
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" 
+                     android:maxSdkVersion="30" 
+                     tools:replace="android:maxSdkVersion" />
 
-    <!-- 2. Modern Bluetooth permissions (Android 12+) -->
+    <!-- 2. Modern Bluetooth (Android 12+) -->
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
     <uses-permission 
         android:name="android.permission.BLUETOOTH_SCAN" 
-        android:usesPermissionFlags="neverForLocation" 
+        android:usesPermissionFlags="neverForLocation"
         tools:targetApi="s" />
 
-    <!-- 3. Location (Required for discovery on older Android versions) -->
+    <!-- 3. Location (Required for discovery on older devices) -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <!-- Coarse is usually enough for BT, but plugins often demand Fine -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
-    <!-- 4. Required Hardware Features -->
+    <!-- Features -->
     <uses-feature android:name="android.hardware.bluetooth" android:required="true" />
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
 
@@ -28,7 +33,7 @@
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="false"
-        android:extractNativeLibs="true"> <!-- Recommended for hardware plugins -->
+        android:extractNativeLibs="true">
 
         <activity
             android:name=".MainActivity"

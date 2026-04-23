@@ -2,93 +2,63 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleDevelopmentRegion</key>
-    <string>$(DEVELOPMENT_LANGUAGE)</string>
     <key>CFBundleDisplayName</key>
     <string>BT SecureChat</string>
-    <key>CFBundleExecutable</key>
-    <string>$(EXECUTABLE_NAME)</string>
     <key>CFBundleIdentifier</key>
     <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-    <key>CFBundleInfoDictionaryVersion</key>
-    <string>6.0</string>
-    <key>CFBundleName</key>
-    <string>bluetooth_chat</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
     <key>CFBundleShortVersionString</key>
     <string>$(FLUTTER_BUILD_NAME)</string>
-    <key>CFBundleSignature</key>
-    <string>????</string>
     <key>CFBundleVersion</key>
     <string>$(FLUTTER_BUILD_NUMBER)</string>
     <key>LSRequiresIPhoneOS</key>
     <true/>
 
-    <!-- ═══════════════════════════════════════════
-         PERFORMANCE
-         Enables 120Hz scrolling on ProMotion displays
-         ═══════════════════════════════════════════ -->
-    <key>CADisableMinimumFrameDurationOnPhone</key>
-    <true/>
-
-    <!-- ═══════════════════════════════════════════
-         BLUETOOTH PERMISSIONS
-         ═══════════════════════════════════════════ -->
+    <!-- 1. Bluetooth Permissions -->
     <key>NSBluetoothAlwaysUsageDescription</key>
-    <string>BT SecureChat uses Bluetooth to discover and connect to nearby devices to send encrypted messages without an internet connection.</string>
+    <string>We use Bluetooth to discover and connect to nearby devices for encrypted offline messaging.</string>
     <key>NSBluetoothPeripheralUsageDescription</key>
-    <string>BT SecureChat needs Bluetooth access to communicate with nearby devices for secure offline messaging.</string>
+    <string>We need Bluetooth access to communicate with nearby devices.</string>
 
-    <!-- ═══════════════════════════════════════════
-         BACKGROUND MODES
-         ═══════════════════════════════════════════ -->
+    <!-- 2. Location Permissions (Required for Bluetooth Discovery) -->
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>Location access is required by iOS to scan for nearby Bluetooth hardware.</string>
+    <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+    <string>Background location allows us to maintain the secure chat connection while the app is in the background.</string>
+
+    <!-- 3. Camera & Microphone (For sharing media) -->
+    <key>NSCameraUsageDescription</key>
+    <string>We need camera access to take secure photos and videos within the chat.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Microphone access is required for recording and sending secure voice messages.</string>
+
+    <!-- 4. Photo Library (For sharing existing files) -->
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>Access to your photo library allows you to send images and videos to your contacts.</string>
+    <key>NSPhotoLibraryAddUsageDescription</key>
+    <string>We need permission to save photos received from the chat into your gallery.</string>
+
+    <!-- 5. Network (Internet is allowed by default, but we block HTTP for security) -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoads</key>
+        <false/>
+    </dict>
+
+    <!-- Background Modes -->
     <key>UIBackgroundModes</key>
     <array>
         <string>bluetooth-central</string>
         <string>bluetooth-peripheral</string>
     </array>
 
-    <!-- ═══════════════════════════════════════════
-         ENCRYPTION COMPLIANCE
-         Setting this to NO indicates you use standard 
-         encryption within iOS/Flutter. This skips the
-         export compliance prompt in App Store Connect.
-         ═══════════════════════════════════════════ -->
-    <key>ITSAppUsesNonExemptEncryption</key>
-    <false/>
-
-    <!-- ═══════════════════════════════════════════
-         UI CONFIGURATION
-         ═══════════════════════════════════════════ -->
+    <!-- Performance & Appearance -->
+    <key>CADisableMinimumFrameDurationOnPhone</key>
+    <true/>
+    <key>UIUserInterfaceStyle</key>
+    <string>Dark</string>
     <key>UILaunchStoryboardName</key>
     <string>LaunchScreen</string>
     <key>UIMainStoryboardFile</key>
     <string>Main</string>
-    <key>UIStatusBarStyle</key>
-    <string>UIStatusBarStyleLightContent</string>
-    <key>UIViewControllerBasedStatusBarAppearance</key>
-    <false/>
-    <key>FLTEnableImpeller</key>
-    <true/>
-
-    <key>UISupportedInterfaceOrientations</key>
-    <array>
-        <string>UIInterfaceOrientationPortrait</string>
-    </array>
-    <key>UISupportedInterfaceOrientations~ipad</key>
-    <array>
-        <string>UIInterfaceOrientationPortrait</string>
-        <string>UIInterfaceOrientationPortraitUpsideDown</string>
-        <string>UIInterfaceOrientationLandscapeLeft</string>
-        <string>UIInterfaceOrientationLandscapeRight</string>
-    </array>
-
-    <!-- Block all web traffic for security -->
-    <key>NSAppTransportSecurity</key>
-    <dict>
-        <key>NSAllowsArbitraryLoads</key>
-        <false/>
-    </dict>
 </dict>
 </plist>

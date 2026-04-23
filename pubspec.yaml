@@ -1,5 +1,5 @@
 name: bluetooth_chat
-description: Encrypted Bluetooth Chat — cross-platform (Android, iOS, macOS, Windows, Linux)
+description: AES-256 Encrypted Bluetooth Chat for Android, iOS, and Desktop.
 publish_to: 'none'
 version: 1.1.0+2
 
@@ -14,11 +14,12 @@ dependencies:
   cupertino_icons: ^1.0.8
 
   # ── Bluetooth ─────────────────────────────────────────────────────────
-  # Classic SPP — Android only. Note: version 0.4.0 is stable but old.
+  # Classic SPP — Android only. 
+  # Note: If build fails on Android 14+, check 'extractNativeLibs' in Manifest.
   flutter_bluetooth_serial: ^0.4.0
 
-  # BLE — The gold standard for Flutter BLE. 
-  # Upgraded to 1.34+ for better Android 14 / iOS 17 support.
+  # BLE — Cross-platform. 
+  # v1.34.0+ is required for reliable Android 14/15 and iOS 17/18 support.
   flutter_blue_plus: ^1.34.0
 
   # ── Permissions ───────────────────────────────────────────────────────
@@ -57,6 +58,7 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   
-  # Ensure your assets folder exists in the project root
+  # Assets must be defined if you are using custom icons or images.
+  # Ensure the directory 'assets/' exists in your project root.
   assets:
     - assets/

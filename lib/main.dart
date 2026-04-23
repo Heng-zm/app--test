@@ -6,19 +6,26 @@ import 'package:provider/provider.dart';
 import 'models/message_model.dart';
 import 'platform/app_platform.dart';
 import 'services/bluetooth_service.dart';
+import 'services/encryption_service.dart';
 import 'screens/home_screen.dart';
-import 'screens/settings_screen.dart'; // Added so we can use it in the nav
+import 'screens/settings_screen.dart';
 import 'theme/app_theme.dart';
 
 Future<void> main() async {
+  // Ensure the Flutter engine is initialized before hardware access
   WidgetsFlutterBinding.ensureInitialized();
 
-  // ── Hive persistence ──────────────────────────────────────────────────────
+  // ── Hive Persistence Initialization ───────────────────────────────────────
+  // Setup local storage for session messages
   await Hive.initFlutter();
-  Hive.registerAdapter(MessageAdapter());
+  if (!Hive.isAdapterRegistered(0)) {
+    Hive.registerAdapter(MessageAdapter());
+  }
   await Hive.openBox<Message>('messages');
 
-  // ── Platform-specific UI config ───────────────────────────────────────────
+  // ── Platform-Specific UI Configuration ────────────────────────────────────
+
+  // Lock orientation for mobile users for a stable dashboard experience
   if (AppPlatform.isMobile) {
     await SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
@@ -26,12 +33,14 @@ Future<void> main() async {
     ]);
   }
 
+  // Set system-level UI styles (Status Bar and Android Navigation Bar)
   if (!AppPlatform.isWeb) {
     SystemChrome.setSystemUIOverlayStyle(
       const SystemUiOverlayStyle(
         statusBarColor: Colors.transparent,
         statusBarIconBrightness: Brightness.light,
-        systemNavigationBarColor: Color(0xFF070B14),
+        systemNavigationBarColor: AppTheme.bgDeep,
+        systemNavigationBarIconBrightness: Brightness.light,
       ),
     );
   }
@@ -44,18 +53,27 @@ class BtSecureChatApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider(
-      create: (_) => BluetoothService(),
+    return MultiProvider(
+      providers: [
+        // 1. Encryption Service handles the crypto logic
+        Provider(create: (_) => EncryptionService()),
+
+        // 2. Bluetooth Service depends on Encryption for sending/receiving
+        ChangeNotifierProvider(
+          create: (context) => BluetoothService(
+            encryption: context.read<EncryptionService>(),
+          ),
+        ),
+      ],
       child: MaterialApp(
         title: 'BT SecureChat',
         debugShowCheckedModeBanner: false,
         theme: AppTheme.darkTheme,
         builder: (context, child) {
-          // MODERN TEXT CLAMPING (Flutter 3.16+):
-          // Replaces the manual TextScaler math with a built-in function
+          // Prevent very large accessibility text from breaking the UI layout
           return MediaQuery.withClampedTextScaling(
             minScaleFactor: 0.8,
-            maxScaleFactor: 1.3,
+            maxScaleFactor: 1.25,
             child: child!,
           );
         },
@@ -65,8 +83,9 @@ class BtSecureChatApp extends StatelessWidget {
   }
 }
 
-/// Top-level shell: uses a NavigationRail on wide screens (desktop/tablet),
-/// bottom nav on narrow screens (phone).
+/// The AppShell manages the top-level navigation and responsiveness.
+/// It uses a side-bar (NavigationRail) on Tablets/Desktop and
+/// a bottom-bar (NavigationBar) on Phones.
 class AppShell extends StatefulWidget {
   const AppShell({super.key});
 
@@ -77,77 +96,91 @@ class AppShell extends StatefulWidget {
 class _AppShellState extends State<AppShell> {
   int _index = 0;
 
-  // Swapped the second HomeScreen placeholder with SettingsScreen
-  static const _screens = [HomeScreen(), SettingsScreen()];
+  // Primary views accessible via navigation
+  final List<Widget> _screens = const [
+    HomeScreen(),
+    SettingsScreen(),
+  ];
 
   @override
   Widget build(BuildContext context) {
-    // Standardizing the wide breakpoint across the app
-    final isWide = MediaQuery.of(context).size.width >= 720;
+    // 720px is the standard breakpoint for wide UI layouts
+    final bool isWide = MediaQuery.of(context).size.width >= 720;
 
-    // ── Wide Layout (Desktop / Tablet) ──────────────────────────────────────
-    if (isWide) {
-      return Scaffold(
-        backgroundColor: AppTheme.bgDeep,
-        body: Row(
-          children: [
+    return Scaffold(
+      backgroundColor: AppTheme.bgDeep,
+      body: Row(
+        children: [
+          // ── WIDE LAYOUT (TABLET / DESKTOP) ────────────────────────────────
+          if (isWide) ...[
             NavigationRail(
               backgroundColor: AppTheme.bgSurface,
               selectedIndex: _index,
-              onDestinationSelected: (int index) =>
-                  setState(() => _index = index),
-              selectedIconTheme:
-                  const IconThemeData(color: AppTheme.accentCyan),
-              unselectedIconTheme: const IconThemeData(color: AppTheme.textDim),
-              selectedLabelTextStyle:
-                  const TextStyle(color: AppTheme.accentCyan),
-              unselectedLabelTextStyle:
-                  const TextStyle(color: AppTheme.textDim),
+              onDestinationSelected: (idx) => setState(() => _index = idx),
               labelType: NavigationRailLabelType.all,
+              indicatorColor: AppTheme.accentCyan.withOpacity(0.1),
+              selectedIconTheme:
+                  const IconThemeData(color: AppTheme.accentCyan, size: 28),
+              unselectedIconTheme:
+                  const IconThemeData(color: AppTheme.textDim, size: 24),
+              selectedLabelTextStyle: const TextStyle(
+                  color: AppTheme.accentCyan,
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 1),
+              unselectedLabelTextStyle:
+                  const TextStyle(color: AppTheme.textDim, fontSize: 11),
               destinations: const [
                 NavigationRailDestination(
-                  icon: Icon(Icons.bluetooth),
-                  label: Text('Chat'),
+                  icon: Icon(Icons.bluetooth_searching),
+                  label: Text('TERMINAL'),
                 ),
                 NavigationRailDestination(
                   icon: Icon(Icons.security),
-                  label: Text('Settings'),
+                  label: Text('ENCRYPTION'),
                 ),
               ],
             ),
             const VerticalDivider(
-                thickness: 1, width: 1, color: AppTheme.borderGlow),
-            Expanded(
-              // Wrap with ClipRect to ensure child screens don't overflow into the rail
-              child: ClipRect(child: _screens[_index]),
-            ),
+                width: 1, thickness: 1, color: AppTheme.borderGlow),
           ],
-        ),
-      );
-    }
 
-    // ── Narrow Layout (Mobile Phone) ────────────────────────────────────────
-    return Scaffold(
-      backgroundColor: AppTheme.bgDeep,
-      body: _screens[_index],
-      bottomNavigationBar: NavigationBar(
-        backgroundColor: AppTheme.bgSurface,
-        indicatorColor: AppTheme.accentCyan.withOpacity(0.15),
-        selectedIndex: _index,
-        onDestinationSelected: (int index) => setState(() => _index = index),
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.bluetooth, color: AppTheme.textDim),
-            selectedIcon: Icon(Icons.bluetooth, color: AppTheme.accentCyan),
-            label: 'Chat',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.security, color: AppTheme.textDim),
-            selectedIcon: Icon(Icons.security, color: AppTheme.accentCyan),
-            label: 'Settings',
+          // Main Screen Content
+          Expanded(
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 300),
+              child: _screens[_index],
+            ),
           ),
         ],
       ),
+
+      // ── NARROW LAYOUT (MOBILE PHONE) ──────────────────────────────────────
+      bottomNavigationBar: isWide
+          ? null
+          : NavigationBar(
+              height: 70,
+              backgroundColor: AppTheme.bgSurface,
+              selectedIndex: _index,
+              onDestinationSelected: (idx) => setState(() => _index = idx),
+              indicatorColor: AppTheme.accentCyan.withOpacity(0.1),
+              labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+              destinations: const [
+                NavigationDestination(
+                  icon:
+                      Icon(Icons.bluetooth_searching, color: AppTheme.textDim),
+                  selectedIcon: Icon(Icons.bluetooth_searching,
+                      color: AppTheme.accentCyan),
+                  label: 'Connect',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.security, color: AppTheme.textDim),
+                  selectedIcon:
+                      Icon(Icons.security, color: AppTheme.accentCyan),
+                  label: 'Security',
+                ),
+              ],
+            ),
     );
   }
 }

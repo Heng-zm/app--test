@@ -51,10 +51,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
       backgroundColor: AppTheme.bgDeep,
       appBar: AppBar(
         backgroundColor: AppTheme.bgDeep,
+        elevation: 0,
         title: const Text('SECURITY SETTINGS'),
+        centerTitle: false,
         bottom: PreferredSize(
-            preferredSize: const Size.fromHeight(1),
-            child: Container(height: 1, color: AppTheme.borderGlow)),
+          preferredSize: const Size.fromHeight(1),
+          child: Container(height: 1, color: AppTheme.borderGlow),
+        ),
       ),
       // Tap outside to dismiss keyboard
       body: GestureDetector(
@@ -71,11 +74,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _buildPlatformCard(),
             const SizedBox(height: 22),
             _buildTips(),
+            const SizedBox(height: 40),
           ],
         ),
       ),
     );
   }
+
+  // ── Encryption Details ──────────────────────────────────────────────────
 
   Widget _buildStatusCard() {
     return Container(
@@ -92,125 +98,157 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         border: Border.all(color: AppTheme.accentCyan.withOpacity(0.3)),
       ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          const Icon(Icons.shield_outlined,
-              color: AppTheme.accentCyan, size: 20),
-          const SizedBox(width: 10),
-          const Text('ENCRYPTION STATUS',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            const Icon(Icons.shield_outlined,
+                color: AppTheme.accentCyan, size: 20),
+            const SizedBox(width: 10),
+            const Text(
+              'ENCRYPTION STATUS',
               style: TextStyle(
-                  color: AppTheme.accentCyan,
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 1.5)),
-        ]),
-        const SizedBox(height: 14),
-        _row('Algorithm', 'AES-256-CBC'),
-        _row('Key derivation', 'SHA-256'),
-        _row('IV generation', 'Random per message ✓'),
-        _row('Version', 'v2 (with legacy fallback)'),
-        _row('Key fingerprint', _hashPreview,
-            mono: true, color: AppTheme.accentGreen),
-      ]),
+                color: AppTheme.accentCyan,
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 1.5,
+              ),
+            ),
+          ]),
+          const SizedBox(height: 14),
+          _row('Algorithm', 'AES-256-CBC'),
+          _row('Key derivation', 'SHA-256'),
+          _row('IV generation', 'Random per message ✓'),
+          _row('Version', 'v2 (Current)'),
+          _row('Key fingerprint', _hashPreview,
+              mono: true, color: AppTheme.accentGreen),
+        ],
+      ),
     );
   }
 
   Widget _row(String label, String value, {bool mono = false, Color? color}) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 7),
-      child: Row(children: [
-        Text(label,
-            style:
-                const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-        const Spacer(),
-        Text(value,
+      child: Row(
+        children: [
+          Text(label,
+              style:
+                  const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+          const Spacer(),
+          Text(
+            value,
             style: TextStyle(
               color: color ?? AppTheme.textPrimary,
-              fontSize: 12,
+              fontSize: 11,
               fontWeight: FontWeight.w600,
               fontFamily: mono ? 'monospace' : null,
-            )),
-      ]),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
+  // ── Passphrase Configuration ────────────────────────────────────────────
+
   Widget _buildPassphraseSection() {
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Row(children: [
-        const Text('SHARED PASSPHRASE',
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(children: [
+          const Text(
+            'SHARED PASSPHRASE',
             style: TextStyle(
-                color: AppTheme.textSecondary,
-                fontSize: 10,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 2)),
-        const SizedBox(width: 8),
-        if (_saved)
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-            decoration: BoxDecoration(
-              color: AppTheme.accentGreen.withOpacity(0.15),
-              borderRadius: BorderRadius.circular(4),
+              color: AppTheme.textSecondary,
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 2,
             ),
-            child: const Text('SAVED',
+          ),
+          const SizedBox(width: 8),
+          if (_saved)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: AppTheme.accentGreen.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: const Text(
+                'SAVED',
                 style: TextStyle(
                     color: AppTheme.accentGreen,
-                    fontSize: 9,
-                    fontWeight: FontWeight.bold)),
-          ),
-      ]),
-      const SizedBox(height: 5),
-      const Text('Both devices must use the same passphrase.',
-          style: TextStyle(color: AppTheme.textDim, fontSize: 12)),
-      const SizedBox(height: 12),
-      TextField(
-        controller: _passphraseCtrl,
-        obscureText: _obscure,
-        style: const TextStyle(
-            color: AppTheme.textPrimary, fontFamily: 'monospace', fontSize: 14),
-        onChanged: (v) {
-          // IMPROVEMENT: Handle empty strings and remove "SAVED" badge if edited
-          setState(() {
-            _saved = false;
-            _hashPreview = v.isNotEmpty
-                ? EncryptionService.hashPreview(v)
-                : '00000000'; // Default placeholder when empty
-          });
-        },
-        decoration: InputDecoration(
-          hintText: 'Enter shared passphrase…',
-          prefixIcon: const Icon(Icons.key, color: AppTheme.textDim, size: 17),
-          suffixIcon: IconButton(
-            icon: Icon(_obscure ? Icons.visibility_off : Icons.visibility,
-                color: AppTheme.textSecondary, size: 17),
-            onPressed: () => setState(() => _obscure = !_obscure),
-          ),
+                    fontSize: 8,
+                    fontWeight: FontWeight.bold),
+              ),
+            ),
+        ]),
+        const SizedBox(height: 6),
+        const Text(
+          'Both devices must use the same exact passphrase to decrypt messages.',
+          style: TextStyle(color: AppTheme.textDim, fontSize: 11),
         ),
-      ),
-      const SizedBox(height: 12),
-      Row(children: [
-        Expanded(
-          child: OutlinedButton.icon(
-            onPressed: _generatePassphrase,
-            icon: const Icon(Icons.auto_awesome, size: 15),
-            label: const Text('GENERATE'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: AppTheme.accentCyan,
-              side: const BorderSide(color: AppTheme.accentCyan),
-              padding: const EdgeInsets.symmetric(vertical: 12),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _passphraseCtrl,
+          obscureText: _obscure,
+          style: const TextStyle(
+              color: AppTheme.textPrimary,
+              fontFamily: 'monospace',
+              fontSize: 14),
+          onChanged: (v) {
+            setState(() {
+              _saved = false;
+              _hashPreview =
+                  v.isNotEmpty ? EncryptionService.hashPreview(v) : '00000000';
+            });
+          },
+          decoration: InputDecoration(
+            hintText: 'Enter shared passphrase…',
+            prefixIcon:
+                const Icon(Icons.key, color: AppTheme.textDim, size: 17),
+            suffixIcon: IconButton(
+              icon: Icon(_obscure ? Icons.visibility_off : Icons.visibility,
+                  color: AppTheme.textSecondary, size: 17),
+              onPressed: () => setState(() => _obscure = !_obscure),
             ),
           ),
         ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: ElevatedButton.icon(
-            onPressed: _applyPassphrase,
-            icon: const Icon(Icons.check, size: 15),
-            label: const Text('APPLY & SAVE'),
-          ),
+        const SizedBox(height: 16),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: _generatePassphrase,
+                icon: const Icon(Icons.auto_awesome, size: 15),
+                label: const Text('GENERATE'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppTheme.accentCyan,
+                  side: const BorderSide(color: AppTheme.accentCyan),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: _applyPassphrase,
+                icon: const Icon(Icons.check, size: 15),
+                label: const Text('APPLY & SAVE'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.accentCyan,
+                  foregroundColor: AppTheme.bgDeep,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+              ),
+            ),
+          ],
         ),
-      ]),
-    ]);
+      ],
+    );
   }
+
+  // ── Visual Key Verification ─────────────────────────────────────────────
 
   Widget _buildFingerprintCard() {
     return Container(
@@ -220,37 +258,48 @@ class _SettingsScreenState extends State<SettingsScreen> {
         color: AppTheme.bgCard,
         border: Border.all(color: AppTheme.borderGlow),
       ),
-      child: Row(children: [
-        const Icon(Icons.fingerprint, color: AppTheme.accentPurple, size: 22),
-        const SizedBox(width: 12),
-        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('KEY FINGERPRINT',
-              style: TextStyle(
-                  color: AppTheme.textSecondary,
-                  fontSize: 9,
-                  letterSpacing: 1.5)),
-          Text(_hashPreview,
-              style: const TextStyle(
+      child: Row(
+        children: [
+          const Icon(Icons.fingerprint, color: AppTheme.accentPurple, size: 22),
+          const SizedBox(width: 12),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('KEY FINGERPRINT',
+                  style: TextStyle(
+                      color: AppTheme.textSecondary,
+                      fontSize: 9,
+                      letterSpacing: 1.5)),
+              Text(
+                _hashPreview,
+                style: const TextStyle(
                   color: AppTheme.accentPurple,
-                  fontSize: 20,
+                  fontSize: 18,
                   fontFamily: 'monospace',
                   fontWeight: FontWeight.bold,
-                  letterSpacing: 4)),
-        ]),
-        const Spacer(),
-        IconButton(
-          onPressed: () {
-            Clipboard.setData(ClipboardData(text: _hashPreview));
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-              content: Text('Fingerprint copied'),
-              duration: Duration(seconds: 1),
-            ));
-          },
-          icon: const Icon(Icons.copy, color: AppTheme.textDim, size: 17),
-        ),
-      ]),
+                  letterSpacing: 3,
+                ),
+              ),
+            ],
+          ),
+          const Spacer(),
+          IconButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: _hashPreview));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                    content: Text('Fingerprint Copied'),
+                    duration: Duration(seconds: 1)),
+              );
+            },
+            icon: const Icon(Icons.copy, color: AppTheme.textDim, size: 17),
+          ),
+        ],
+      ),
     );
   }
+
+  // ── Hardware Capabilities ───────────────────────────────────────────────
 
   Widget _buildPlatformCard() {
     return Container(
@@ -260,49 +309,61 @@ class _SettingsScreenState extends State<SettingsScreen> {
         color: AppTheme.bgCard,
         border: Border.all(color: AppTheme.borderGlow),
       ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Text('PLATFORM CAPABILITIES',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'HARDWARE CAPABILITIES',
             style: TextStyle(
                 color: AppTheme.textSecondary,
                 fontSize: 10,
                 fontWeight: FontWeight.bold,
-                letterSpacing: 2)),
-        const SizedBox(height: 12),
-        _capRow('Platform', AppPlatform.name),
-        _capRow(
-            'Bluetooth Classic (SPP)',
+                letterSpacing: 2),
+          ),
+          const SizedBox(height: 12),
+          _capRow('OS Platform', AppPlatform.name),
+          _capRow(
+            'BT Classic (SPP)',
             AppPlatform.supportsClassicBluetooth
-                ? '✓ Supported'
-                : '✗ Not available',
+                ? '✓ Available'
+                : '✗ Unsupported',
             color: AppPlatform.supportsClassicBluetooth
                 ? AppTheme.accentGreen
-                : AppTheme.textDim),
-        _capRow('Bluetooth LE (BLE)',
-            AppPlatform.supportsBLE ? '✓ Supported' : '✗ Not available',
+                : AppTheme.textDim,
+          ),
+          _capRow(
+            'BT Low Energy (BLE)',
+            AppPlatform.supportsBLE ? '✓ Available' : '✗ Unsupported',
             color: AppPlatform.supportsBLE
                 ? AppTheme.accentGreen
-                : AppTheme.textDim),
-        _capRow('Runtime permissions',
-            AppPlatform.needsRuntimePermissions ? 'Required' : 'Not required',
-            color: AppTheme.textSecondary),
-      ]),
+                : AppTheme.textDim,
+          ),
+          _capRow(
+            'Permissions',
+            AppPlatform.needsRuntimePermissions ? 'Managed' : 'System-level',
+            color: AppTheme.textSecondary,
+          ),
+        ],
+      ),
     );
   }
 
   Widget _capRow(String label, String value, {Color? color}) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 7),
-      child: Row(children: [
-        Text(label,
-            style:
-                const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-        const Spacer(),
-        Text(value,
-            style: TextStyle(
-                color: color ?? AppTheme.textPrimary,
-                fontSize: 12,
-                fontWeight: FontWeight.w500)),
-      ]),
+      child: Row(
+        children: [
+          Text(label,
+              style:
+                  const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+          const Spacer(),
+          Text(value,
+              style: TextStyle(
+                  color: color ?? AppTheme.textPrimary,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500)),
+        ],
+      ),
     );
   }
 
@@ -310,45 +371,50 @@ class _SettingsScreenState extends State<SettingsScreen> {
     const tips = [
       (
         '🔐',
-        'Share the passphrase with your contact via a secure, out-of-band channel.'
+        'Exchange passphrases via a secure, separate channel (e.g. in-person).'
+      ),
+      (
+        '📋',
+        'Visual check: The 8-digit fingerprint must be identical on both screens.'
       ),
       (
         '🔄',
-        'Change passphrases regularly and after each session for better security.'
-      ),
-      ('📋', 'Compare fingerprints on both devices — they must match exactly.'),
-      (
-        '⚠️',
-        'Messages encrypted with a different passphrase cannot be decrypted.'
-      ),
-      (
-        '🔀',
-        'v2 uses a random IV per message, preventing ciphertext analysis.'
+        'If decryption fails, ensure both devices updated to the same passphrase.'
       ),
     ];
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      const Text('SECURITY NOTES',
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'SECURITY PROTOCOL',
           style: TextStyle(
               color: AppTheme.textSecondary,
               fontSize: 10,
               fontWeight: FontWeight.bold,
-              letterSpacing: 2)),
-      const SizedBox(height: 12),
-      ...tips.map((t) => Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(t.$1, style: const TextStyle(fontSize: 14)),
-              const SizedBox(width: 10),
-              Expanded(
-                  child: Text(t.$2,
-                      style: const TextStyle(
-                          color: AppTheme.textSecondary,
-                          fontSize: 12,
-                          height: 1.5))),
-            ]),
-          )),
-    ]);
+              letterSpacing: 2),
+        ),
+        const SizedBox(height: 12),
+        ...tips.map((t) => Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(t.$1, style: const TextStyle(fontSize: 14)),
+                  const SizedBox(width: 10),
+                  Expanded(
+                      child: Text(t.$2,
+                          style: const TextStyle(
+                              color: AppTheme.textSecondary,
+                              fontSize: 11,
+                              height: 1.4))),
+                ],
+              ),
+            )),
+      ],
+    );
   }
+
+  // ── Actions ──────────────────────────────────────────────────────────────
 
   void _generatePassphrase() {
     final p = EncryptionService.generatePassphrase();
@@ -356,7 +422,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() {
       _hashPreview = EncryptionService.hashPreview(p);
       _obscure = false;
-      _saved = false; // Set to false because it hasn't been applied yet
+      _saved = false;
     });
   }
 
@@ -364,7 +430,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final p = _passphraseCtrl.text.trim();
     if (p.isEmpty) return;
 
-    // Dismiss keyboard
     FocusScope.of(context).unfocus();
 
     context.read<BluetoothService>().updatePassphrase(p);
@@ -372,7 +437,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('passphrase', p);
 
-    // IMPROVEMENT: Proper mounted check before setState
     if (!mounted) return;
 
     setState(() {
@@ -381,7 +445,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
 
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: const Text('Passphrase updated and saved'),
+      content: const Text('Passphrase Applied & Saved Locally'),
       backgroundColor: AppTheme.accentGreen.withOpacity(0.9),
       behavior: SnackBarBehavior.floating,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),

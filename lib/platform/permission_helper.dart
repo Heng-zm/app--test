@@ -5,18 +5,16 @@ import 'app_platform.dart';
 class PermissionHelper {
   PermissionHelper._();
 
-  /// Request all Bluetooth + Location permissions required on the current platform.
-  /// Returns true if all necessary permissions are granted.
-  static Future<bool> requestBluetoothPermissions() async {
+  /// Requests all necessary permissions (BT, Location, Camera, Photos, Mic).
+  /// Returns true only if the "hard" requirements (Bluetooth/Location) are met.
+  static Future<bool> requestAllPermissions() async {
     // Web and desktop: no runtime permissions needed via permission_handler
     if (!AppPlatform.needsRuntimePermissions) return true;
 
     final List<Permission> required = [];
 
+    // ── Bluetooth & Location ────────────────────────────────────────────────
     if (AppPlatform.isAndroid) {
-      // Android 12+ (API 31+) uses new granular BT permissions.
-      // permission_handler resolves the API level internally, so on API < 31,
-      // requesting bluetoothScan will automatically ask for location instead.
       required.addAll([
         Permission.bluetoothScan,
         Permission.bluetoothConnect,
@@ -24,45 +22,60 @@ class PermissionHelper {
         Permission.location,
       ]);
     } else if (AppPlatform.isIOS) {
-      // iOS only needs bluetooth; location is NOT required for BLE on iOS 13+.
       required.add(Permission.bluetooth);
+      required.add(Permission.locationWhenInUse);
     }
+
+    // ── Media & Hardware ────────────────────────────────────────────────────
+    required.addAll([
+      Permission.camera,
+      Permission.microphone,
+      Permission
+          .photos, // On Android 13+, this handles granular media permissions
+    ]);
 
     if (required.isEmpty) return true;
 
+    // Request everything in a single system batch
     final statuses = await required.request();
 
     // Debug logging for denied permissions
     for (final entry in statuses.entries) {
       if (!entry.value.isGranted && !entry.value.isLimited) {
-        debugPrint(
-            '[Permissions] Denied/Restricted: ${entry.key} → ${entry.value}');
+        debugPrint('[Permissions] Denied: ${entry.key} → ${entry.value}');
       }
     }
 
-    // ── Platform-specific evaluation ────────────────────────────────────────
+    // ── Platform-Specific Validation ────────────────────────────────────────
+
+    bool isGood(Permission p) {
+      final status = statuses[p];
+      // isLimited is successful (used for iOS "Selected Photos" mode)
+      return status != null && (status.isGranted || status.isLimited);
+    }
 
     if (AppPlatform.isAndroid) {
-      // Helper to check if a permission is functional (granted or limited)
-      bool isGood(Permission p) {
-        final status = statuses[p];
-        return status != null && (status.isGranted || status.isLimited);
-      }
-
-      // We ensure scan, connect, and advertise are all functional.
-      // (We don't strictly enforce Location here, because on Android 12+
-      // location is often not needed if 'neverForLocation' is in the manifest).
+      // Android Core Requirements: Bluetooth (for connection)
       return isGood(Permission.bluetoothScan) &&
           isGood(Permission.bluetoothConnect) &&
           isGood(Permission.bluetoothAdvertise);
     } else if (AppPlatform.isIOS) {
-      final status = statuses[Permission.bluetooth];
-      return status != null && (status.isGranted || status.isLimited);
+      // iOS Core Requirements: Bluetooth
+      return isGood(Permission.bluetooth);
     }
 
     return true;
   }
 
-  /// Opens the app settings page so the user can grant denied permissions.
+  /// Optional: Specifically request background location if needed for iOS
+  static Future<bool> requestBackgroundLocation() async {
+    if (AppPlatform.isIOS) {
+      final status = await Permission.locationAlways.request();
+      return status.isGranted;
+    }
+    return true;
+  }
+
+  /// Opens the app settings page
   static Future<void> openSettings() => openAppSettings();
 }

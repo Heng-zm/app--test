@@ -1,9 +1,7 @@
 import 'dart:typed_data';
 import '../models/device_model.dart';
 
-/// No-op stub used on iOS, macOS, Windows, Linux, Web.
-/// The real implementation lives in bluetooth_classic_android.dart and is
-/// only compiled on Android.
+/// Placeholder for non-Android platforms.
 class ClassicBluetoothHelper {
   bool get isConnected => false;
 
@@ -15,7 +13,9 @@ class ClassicBluetoothHelper {
     required void Function(BTDevice) onFound,
     required void Function() onDone,
     required void Function(dynamic) onError,
-  }) {}
+  }) {
+    onDone();
+  }
 
   Future<void> cancelDiscovery() async {}
 
@@ -25,10 +25,7 @@ class ClassicBluetoothHelper {
     required void Function() onDone,
     required void Function(dynamic) onError,
   }) async {
-    throw UnsupportedError(
-      'Bluetooth Classic is only available on Android. '
-      'Use BLE on this platform.',
-    );
+    throw UnsupportedError('Classic BT is Android-only.');
   }
 
   Future<void> send(Uint8List data) async {}

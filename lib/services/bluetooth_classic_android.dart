@@ -3,9 +3,6 @@ import 'dart:typed_data';
 import 'package:flutter_bluetooth_serial/flutter_bluetooth_serial.dart';
 import '../models/device_model.dart';
 
-/// Wraps flutter_bluetooth_serial for Bluetooth Classic (SPP) on Android.
-/// Compiled only when dart.library.io is available AND platform is Android
-/// (enforced via the conditional import in bluetooth_service.dart).
 class ClassicBluetoothHelper {
   BluetoothConnection? _connection;
   StreamSubscription? _inputSub;
@@ -24,11 +21,11 @@ class ClassicBluetoothHelper {
     final bonded = await FlutterBluetoothSerial.instance.getBondedDevices();
     return bonded
         .map((d) => BTDevice(
-              name: d.name?.isNotEmpty == true ? d.name! : 'Unknown',
+              name: d.name ?? 'Unknown',
               address: d.address,
-              type: _typeLabel(d.type),
+              type: 'Classic',
               isPaired: true,
-              isBLE: d.type == BluetoothDeviceType.le,
+              isBLE: false,
             ))
         .toList();
   }
@@ -42,17 +39,16 @@ class ClassicBluetoothHelper {
     _discoverySub = FlutterBluetoothSerial.instance.startDiscovery().listen(
       (r) {
         onFound(BTDevice(
-          name: r.device.name?.isNotEmpty == true ? r.device.name! : 'Unknown',
+          name: r.device.name ?? 'Unknown',
           address: r.device.address,
-          type: _typeLabel(r.device.type),
+          type: 'Classic',
           rssi: r.rssi,
           isPaired: r.device.isBonded,
-          isBLE: r.device.type == BluetoothDeviceType.le,
+          isBLE: false,
         ));
       },
       onDone: onDone,
       onError: onError,
-      cancelOnError: false,
     );
   }
 
@@ -69,18 +65,18 @@ class ClassicBluetoothHelper {
     required void Function(dynamic) onError,
   }) async {
     _connection = await BluetoothConnection.toAddress(address);
-
     _inputSub = _connection!.input!.listen(
-      (data) => onData(data),
+      onData,
       onDone: onDone,
       onError: onError,
-      cancelOnError: false,
     );
   }
 
   Future<void> send(Uint8List data) async {
-    _connection?.output.add(data);
-    await _connection?.output.allSent;
+    if (_connection != null && _connection!.isConnected) {
+      _connection!.output.add(data);
+      await _connection!.output.allSent;
+    }
   }
 
   Future<void> disconnect() async {
@@ -94,14 +90,5 @@ class ClassicBluetoothHelper {
     _discoverySub?.cancel();
     _inputSub?.cancel();
     _connection?.close();
-  }
-
-  static String _typeLabel(BluetoothDeviceType t) {
-    switch (t) {
-      case BluetoothDeviceType.classic: return 'Classic';
-      case BluetoothDeviceType.le:      return 'BLE';
-      case BluetoothDeviceType.dual:    return 'Dual';
-      default:                          return 'Unknown';
-    }
   }
 }

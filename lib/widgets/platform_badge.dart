@@ -2,35 +2,48 @@ import 'package:flutter/material.dart';
 import '../platform/app_platform.dart';
 import '../theme/app_theme.dart';
 
+/// A small, stylized badge that identifies the current operating system.
+/// Matches the app's technical/cyberpunk aesthetic.
 class PlatformBadge extends StatelessWidget {
   const PlatformBadge({super.key});
 
   @override
   Widget build(BuildContext context) {
-    Color color;
-    if (AppPlatform.isAndroid)       color = AppTheme.accentGreen;
-    else if (AppPlatform.isIOS)      color = AppTheme.accentCyan;
-    else if (AppPlatform.isMacOS)    color = AppTheme.accentPurple;
-    else if (AppPlatform.isWindows)  color = const Color(0xFF0078D4);
-    else if (AppPlatform.isLinux)    color = AppTheme.accentTeal;
-    else                             color = AppTheme.textDim;
+    final Color platformColor = _getPlatformColor();
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.15),
+        // Subtle background glow using the platform's signature color
+        color: platformColor.withOpacity(0.12),
         borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: color.withOpacity(0.4)),
+        border: Border.all(
+          color: platformColor.withOpacity(0.4),
+          width: 1,
+        ),
       ),
       child: Text(
         AppPlatform.name.toUpperCase(),
         style: TextStyle(
-          color: color,
-          fontSize: 9,
-          fontWeight: FontWeight.bold,
-          letterSpacing: 1,
+          color: platformColor,
+          fontSize: 8,
+          fontWeight: FontWeight.w900,
+          letterSpacing: 1.2,
         ),
       ),
     );
+  }
+
+  /// Maps the platform to a specific color from the AppTheme.
+  Color _getPlatformColor() {
+    if (AppPlatform.isAndroid) return AppTheme.accentGreen;
+    if (AppPlatform.isIOS) return AppTheme.accentCyan;
+    if (AppPlatform.isMacOS) return AppTheme.accentPurple;
+    if (AppPlatform.isWindows) return const Color(0xFF0078D4); // Windows Blue
+    if (AppPlatform.isLinux) return AppTheme.accentTeal;
+    if (AppPlatform.isWeb) return Colors.orangeAccent;
+    if (AppPlatform.isFuchsia) return Colors.pinkAccent;
+
+    return AppTheme.textDim;
   }
 }

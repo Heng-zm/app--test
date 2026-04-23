@@ -26,13 +26,14 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    _boot();
+    // Safety: ensure boot starts after the first frame is rendered
+    WidgetsBinding.instance.addPostFrameCallback((_) => _boot());
   }
 
   Future<void> _boot() async {
-    // Request permissions only on platforms that need them
+    // 1. Request the full set of permissions (BT, Camera, Photos, etc.)
     if (AppPlatform.needsRuntimePermissions) {
-      final granted = await PermissionHelper.requestBluetoothPermissions();
+      final granted = await PermissionHelper.requestAllPermissions();
       if (!granted && mounted) {
         setState(() {
           _permissionDenied = true;
@@ -43,13 +44,24 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     if (!mounted) return;
+
+    // Reset flags if retrying from a denied state
+    setState(() {
+      _permissionDenied = false;
+    });
+
+    // 2. Initialize the Bluetooth Hardware
     final service = context.read<BluetoothService>();
     await service.initialize();
-    if (mounted) setState(() => _initialized = true);
+
+    if (mounted) {
+      setState(() => _initialized = true);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    // Responsive breakpoint: 720px for Tablet/Desktop side-by-side view
     final isWide = MediaQuery.of(context).size.width >= 720;
 
     return Scaffold(
@@ -66,9 +78,11 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // ── AppBar ──────────────────────────────────────────────────────────────
+
   PreferredSizeWidget _buildAppBar(BuildContext context) {
     return AppBar(
       backgroundColor: AppTheme.bgDeep,
+      elevation: 0,
       title: Row(children: [
         Container(
           width: 8,
@@ -78,14 +92,17 @@ class _HomeScreenState extends State<HomeScreen> {
             color: AppTheme.accentCyan,
             boxShadow: [
               BoxShadow(
-                  color: AppTheme.accentCyan.withOpacity(0.7),
-                  blurRadius: 8,
-                  spreadRadius: 2)
+                color: AppTheme.accentCyan.withOpacity(0.7),
+                blurRadius: 8,
+                spreadRadius: 2,
+              )
             ],
           ),
         ),
-        const SizedBox(width: 10),
-        const Text('BT SECURECHAT'),
+        const SizedBox(width: 12),
+        const Text('BT SECURECHAT',
+            style: TextStyle(
+                letterSpacing: 1.5, fontSize: 16, fontWeight: FontWeight.bold)),
         const SizedBox(width: 10),
         const PlatformBadge(),
       ]),
@@ -104,7 +121,7 @@ class _HomeScreenState extends State<HomeScreen> {
           decoration: BoxDecoration(
             gradient: LinearGradient(colors: [
               Colors.transparent,
-              AppTheme.accentCyan.withOpacity(0.5),
+              AppTheme.accentCyan.withOpacity(0.3),
               Colors.transparent,
             ]),
           ),
@@ -114,6 +131,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // ── Layouts ─────────────────────────────────────────────────────────────
+
   Widget _buildNarrowLayout(BuildContext context) {
     return Consumer<BluetoothService>(
       builder: (context, service, _) {
@@ -129,7 +147,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return Consumer<BluetoothService>(
       builder: (context, service, _) {
         return Row(children: [
-          // Left panel: scan + device list
+          // Left panel: Device Discovery (Fixed Width)
           SizedBox(
             width: 340,
             child: Column(children: [
@@ -139,30 +157,38 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           Container(width: 1, color: AppTheme.borderGlow),
 
-          // Right panel: Chat UI or Placeholder
+          // Right panel: In-line Chat Screen (Standard Tablet UX)
           Expanded(
             child: service.isConnected
-                // IMPROVEMENT: Render Chat directly in the right pane for tablets
                 ? const ChatScreen()
-                : Center(
-                    child: Column(mainAxisSize: MainAxisSize.min, children: [
-                      const Icon(Icons.bluetooth,
-                          color: AppTheme.textDim, size: 48),
-                      const SizedBox(height: 16),
-                      const Text(
-                        'Select a device to start chatting',
-                        style: TextStyle(
-                            color: AppTheme.textSecondary, fontSize: 14),
-                      ),
-                    ]),
-                  ),
+                : _buildWidePlaceholder(),
           ),
         ]);
       },
     );
   }
 
-  // ── Content ─────────────────────────────────────────────────────────────
+  Widget _buildWidePlaceholder() {
+    return Center(
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Icon(Icons.bluetooth_searching,
+            color: AppTheme.accentCyan.withOpacity(0.05), size: 160),
+        const SizedBox(height: 24),
+        const Text(
+          'Node inactive.\nSelect a nearby target to establish\nan encrypted communication uplink.',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+              color: AppTheme.textDim,
+              fontSize: 13,
+              height: 1.6,
+              letterSpacing: 0.5),
+        ),
+      ]),
+    );
+  }
+
+  // ── Content Components ──────────────────────────────────────────────────
+
   Widget _buildScrollContent(BuildContext context, BluetoothService service) {
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -173,29 +199,28 @@ class _HomeScreenState extends State<HomeScreen> {
           _buildErrorBanner(service),
         ],
         if (service.pairedDevices.isNotEmpty) ...[
-          const SizedBox(height: 20),
-          _buildSectionHeader('PAIRED DEVICES', Icons.devices),
-          const SizedBox(height: 10),
+          const SizedBox(height: 24),
+          _buildSectionHeader('BONDED NODES', Icons.devices),
+          const SizedBox(height: 12),
           ...service.pairedDevices
               .map((d) => _buildDeviceTile(context, d, service)),
         ],
         if (service.discovered.isNotEmpty) ...[
-          const SizedBox(height: 20),
-          _buildSectionHeader('NEARBY DEVICES', Icons.bluetooth_searching),
-          const SizedBox(height: 10),
+          const SizedBox(height: 24),
+          _buildSectionHeader('DISCOVERED NODES', Icons.radar),
+          const SizedBox(height: 12),
           ...service.discovered
               .map((d) => _buildDeviceTile(context, d, service)),
         ],
         if (service.isDiscovering && service.discovered.isEmpty) ...[
-          const SizedBox(height: 32),
+          const SizedBox(height: 48),
           _buildScanningPlaceholder(),
         ],
-        const SizedBox(height: 24),
+        const SizedBox(height: 40),
       ],
     );
   }
 
-  // ── Widgets ─────────────────────────────────────────────────────────────
   Widget _buildStatusBar(BluetoothService service) {
     Color color;
     String text;
@@ -218,20 +243,19 @@ class _HomeScreenState extends State<HomeScreen> {
         break;
       case BtConnectionState.error:
         color = AppTheme.danger;
-        text = 'ERROR';
+        text = 'HARDWARE ERROR';
         icon = Icons.error_outline;
         break;
       default:
         color = AppTheme.textDim;
-        text = 'READY';
+        text = 'SYSTEM READY';
         icon = Icons.bluetooth;
-        break;
     }
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.07),
-        border: Border(bottom: BorderSide(color: color.withOpacity(0.2))),
+        color: color.withOpacity(0.05),
+        border: Border(bottom: BorderSide(color: color.withOpacity(0.15))),
       ),
       child: Row(children: [
         Icon(icon, color: color, size: 13),
@@ -239,9 +263,9 @@ class _HomeScreenState extends State<HomeScreen> {
         Text(text,
             style: TextStyle(
                 color: color,
-                fontSize: 11,
+                fontSize: 10,
                 fontWeight: FontWeight.bold,
-                letterSpacing: 1.5)),
+                letterSpacing: 1.2)),
         const Spacer(),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -249,21 +273,22 @@ class _HomeScreenState extends State<HomeScreen> {
             border: Border.all(color: AppTheme.accentCyan.withOpacity(0.3)),
             borderRadius: BorderRadius.circular(4),
           ),
-          child: Text('AES-256 · RANDOM IV',
+          child: const Text('AES-256 E2EE',
               style: TextStyle(
-                  color: AppTheme.accentCyan.withOpacity(0.7),
-                  fontSize: 9,
-                  letterSpacing: 1)),
+                  color: AppTheme.accentCyan,
+                  fontSize: 8,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 0.5)),
         ),
       ]),
     );
   }
 
   Widget _buildScanButton(BluetoothService service) {
-    final scanning = service.isDiscovering;
+    final bool isScanning = service.isDiscovering;
     return GlowContainer(
       child: InkWell(
-        onTap: scanning ? service.stopDiscovery : service.startDiscovery,
+        onTap: isScanning ? service.stopDiscovery : service.startDiscovery,
         borderRadius: BorderRadius.circular(16),
         child: Container(
           padding: const EdgeInsets.all(18),
@@ -275,55 +300,40 @@ class _HomeScreenState extends State<HomeScreen> {
               colors: [AppTheme.bgCard, AppTheme.bgSurface],
             ),
             border: Border.all(
-              color: scanning
-                  ? AppTheme.accentCyan.withOpacity(0.5)
-                  : AppTheme.borderGlow,
-            ),
+                color: isScanning
+                    ? AppTheme.accentCyan.withOpacity(0.5)
+                    : AppTheme.borderGlow),
           ),
           child: Row(children: [
-            scanning
-                ? const ScanAnimation(size: 52)
-                : Container(
-                    width: 52,
-                    height: 52,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: AppTheme.accentCyan.withOpacity(0.1),
-                      border: Border.all(
-                          color: AppTheme.accentCyan.withOpacity(0.35)),
-                    ),
-                    child: const Icon(Icons.bluetooth_searching,
-                        color: AppTheme.accentCyan, size: 26),
-                  ),
+            isScanning
+                ? const RepaintBoundary(child: ScanAnimation(size: 48))
+                : const Icon(Icons.bluetooth_searching,
+                    color: AppTheme.accentCyan, size: 32),
             const SizedBox(width: 16),
             Expanded(
                 child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                  Text(isScanning ? 'SEARCHING FOR TARGETS' : 'INITIATE SCAN',
+                      style: const TextStyle(
+                          color: AppTheme.accentCyan,
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 1)),
+                  const SizedBox(height: 4),
                   Text(
-                    scanning ? 'SCANNING...' : 'SCAN FOR DEVICES',
-                    style: const TextStyle(
-                        color: AppTheme.accentCyan,
-                        fontSize: 13,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 1.5),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    scanning
-                        ? 'Tap to stop · ${service.discovered.length} found'
-                        : AppPlatform.supportsClassicBluetooth
-                            ? 'Classic + BLE scan'
-                            : 'BLE scan',
-                    style: const TextStyle(
-                        color: AppTheme.textSecondary, fontSize: 11),
-                  ),
+                      isScanning
+                          ? 'Monitoring radio bands · ${service.discovered.length} detected'
+                          : 'Discover nearby hardware endpoints',
+                      style: const TextStyle(
+                          color: AppTheme.textSecondary, fontSize: 11)),
                 ])),
             Icon(
-              scanning ? Icons.stop_circle : Icons.play_circle,
-              color: scanning ? AppTheme.danger : AppTheme.accentCyan,
-              size: 30,
-            ),
+                isScanning
+                    ? Icons.stop_circle_outlined
+                    : Icons.play_circle_outline,
+                color: isScanning ? AppTheme.danger : AppTheme.accentCyan,
+                size: 28),
           ]),
         ),
       ),
@@ -332,8 +342,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildSectionHeader(String title, IconData icon) {
     return Row(children: [
-      Icon(icon, size: 13, color: AppTheme.textSecondary),
-      const SizedBox(width: 7),
+      Icon(icon, size: 12, color: AppTheme.textSecondary),
+      const SizedBox(width: 8),
       Text(title,
           style: const TextStyle(
               color: AppTheme.textSecondary,
@@ -347,39 +357,24 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildDeviceTile(
       BuildContext context, BTDevice device, BluetoothService service) {
-    final isConnecting = service.state == BtConnectionState.connecting;
+    final bool isConnecting = service.state == BtConnectionState.connecting;
+
     return Container(
-      margin: const EdgeInsets.only(bottom: 9),
+      margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(12),
         color: AppTheme.bgCard,
         border: Border.all(color: AppTheme.borderGlow),
       ),
       child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-        leading: Container(
-          width: 42,
-          height: 42,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: AppTheme.bgSurface,
-            border: Border.all(
-              color: device.isPaired
-                  ? AppTheme.accentTeal.withOpacity(0.5)
-                  : AppTheme.borderGlow,
-            ),
-          ),
-          child: Icon(
-            device.isBLE ? Icons.bluetooth : Icons.phone_android,
-            color:
-                device.isPaired ? AppTheme.accentTeal : AppTheme.textSecondary,
-            size: 18,
-          ),
-        ),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        leading: Icon(
+            device.isBLE ? Icons.bluetooth_audio : Icons.phone_android,
+            color: device.isPaired ? AppTheme.accentTeal : AppTheme.textDim),
         title: Text(device.name,
             style: const TextStyle(
                 color: AppTheme.textPrimary,
-                fontSize: 13,
+                fontSize: 14,
                 fontWeight: FontWeight.w600)),
         subtitle: Row(children: [
           Text(device.displayAddress,
@@ -387,54 +382,30 @@ class _HomeScreenState extends State<HomeScreen> {
                   color: AppTheme.textDim,
                   fontSize: 10,
                   fontFamily: 'monospace')),
-          const SizedBox(width: 6),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-            decoration: BoxDecoration(
-              color:
-                  (device.isBLE ? AppTheme.accentPurple : AppTheme.accentTeal)
-                      .withOpacity(0.15),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Text(
-              device.type,
-              style: TextStyle(
-                color:
-                    device.isBLE ? AppTheme.accentPurple : AppTheme.accentTeal,
-                fontSize: 8,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-          if (device.rssi != null) ...[
-            const SizedBox(width: 6),
-            BTSignalBars(bars: device.signalBars),
-          ],
+          const SizedBox(width: 8),
+          if (device.rssi != null) BTSignalBars(bars: device.signalBars),
         ]),
         trailing: isConnecting
             ? const SizedBox(
-                width: 18,
-                height: 18,
+                width: 20,
+                height: 20,
                 child: CircularProgressIndicator(
                     strokeWidth: 2, color: AppTheme.accentCyan))
-            : GestureDetector(
-                onTap: () => _connect(context, device, service),
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 11, vertical: 5),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(7),
-                    border:
-                        Border.all(color: AppTheme.accentCyan.withOpacity(0.5)),
-                    color: AppTheme.accentCyan.withOpacity(0.07),
-                  ),
-                  child: const Text('CONNECT',
-                      style: TextStyle(
-                          color: AppTheme.accentCyan,
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 1)),
+            : ElevatedButton(
+                onPressed: () => _connect(context, device, service),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.bgSurface,
+                  foregroundColor: AppTheme.accentCyan,
+                  side:
+                      const BorderSide(color: AppTheme.accentCyan, width: 0.5),
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  minimumSize: const Size(0, 30),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8)),
                 ),
+                child: const Text('CONNECT',
+                    style:
+                        TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
               ),
       ),
     );
@@ -442,9 +413,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildScanningPlaceholder() {
     return Column(children: [
-      const ScanAnimation(size: 72),
-      const SizedBox(height: 14),
-      Text('SEARCHING FOR DEVICES...',
+      const RepaintBoundary(child: ScanAnimation(size: 80)),
+      const SizedBox(height: 16),
+      Text('POLLING FREQUENCIES...',
           style: TextStyle(
               color: AppTheme.accentCyan.withOpacity(0.5),
               fontSize: 10,
@@ -455,81 +426,79 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildErrorBanner(BluetoothService service) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(10),
-        color: AppTheme.danger.withOpacity(0.09),
-        border: Border.all(color: AppTheme.danger.withOpacity(0.35)),
+        borderRadius: BorderRadius.circular(8),
+        color: AppTheme.danger.withOpacity(0.1),
+        border: Border.all(color: AppTheme.danger.withOpacity(0.3)),
       ),
       child: Row(children: [
-        const Icon(Icons.error_outline, color: AppTheme.danger, size: 17),
-        const SizedBox(width: 10),
+        const Icon(Icons.warning_amber_rounded,
+            color: AppTheme.danger, size: 18),
+        const SizedBox(width: 12),
         Expanded(
-            child: Text(service.errorMessage ?? '',
+            child: Text(service.errorMessage ?? 'Radio Link Failure',
                 style: const TextStyle(color: AppTheme.danger, fontSize: 12))),
-        GestureDetector(
-          onTap: service.clearError,
-          child: const Icon(Icons.close, size: 15, color: AppTheme.danger),
-        ),
+        IconButton(
+            onPressed: service.clearError,
+            icon: const Icon(Icons.close, size: 16, color: AppTheme.danger)),
       ]),
     );
   }
 
   Widget _buildLoading() {
-    return Center(
+    return Scaffold(
+      backgroundColor: AppTheme.bgDeep,
+      body: Center(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
-      const ScanAnimation(size: 110),
-      const SizedBox(height: 22),
-      Text('INITIALIZING BLUETOOTH',
-          style: TextStyle(
-              color: AppTheme.accentCyan.withOpacity(0.7),
-              fontSize: 10,
-              letterSpacing: 2,
-              fontWeight: FontWeight.bold)),
-    ]));
+          const RepaintBoundary(child: ScanAnimation(size: 100)),
+          const SizedBox(height: 24),
+          const Text('INITIALIZING SECURE PROTOCOLS',
+              style: TextStyle(
+                  color: AppTheme.accentCyan,
+                  fontSize: 10,
+                  letterSpacing: 2,
+                  fontWeight: FontWeight.bold)),
+        ]),
+      ),
+    );
   }
 
   Widget _buildPermissionDenied() {
     return Center(
         child: Padding(
-      padding: const EdgeInsets.all(32),
+      padding: const EdgeInsets.all(40),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
-        const Icon(Icons.bluetooth_disabled, color: AppTheme.danger, size: 56),
-        const SizedBox(height: 20),
-        const Text('BLUETOOTH PERMISSION DENIED',
+        const Icon(Icons.security_update_warning,
+            color: AppTheme.danger, size: 64),
+        const SizedBox(height: 24),
+        const Text('CRITICAL SECURITY PERMISSION DENIED',
             textAlign: TextAlign.center,
             style: TextStyle(
-                color: AppTheme.danger,
+                color: AppTheme.textPrimary,
                 fontSize: 14,
                 fontWeight: FontWeight.bold,
                 letterSpacing: 1)),
         const SizedBox(height: 12),
         const Text(
-          'BT SecureChat needs Bluetooth and Location access to discover and connect to nearby devices.',
+          'SecureChat requires Bluetooth and hardware access to establish encrypted links. This app cannot function without these parameters.',
           textAlign: TextAlign.center,
           style: TextStyle(
-              color: AppTheme.textSecondary, fontSize: 13, height: 1.5),
+              color: AppTheme.textSecondary, fontSize: 12, height: 1.6),
         ),
-        const SizedBox(height: 24),
-        ElevatedButton.icon(
+        const SizedBox(height: 32),
+        ElevatedButton(
           onPressed: () async {
             await PermissionHelper.openSettings();
-            if (mounted) {
-              setState(() {
-                _initialized = false;
-                _permissionDenied = false;
-              });
-              _boot();
-            }
+            _boot(); // Retry boot after returning from settings
           },
-          icon: const Icon(Icons.settings),
-          label: const Text('OPEN SETTINGS'),
+          child: const Text('MANUAL OVERRIDE (SETTINGS)'),
         ),
       ]),
     ));
   }
 
-  // IMPROVEMENT: Handle navigation properly as a result of an action
+  // BUG FIX: Navigation is now a direct, safe result of a user action.
   Future<void> _connect(
       BuildContext context, BTDevice device, BluetoothService service) async {
     await service.stopDiscovery();
@@ -537,17 +506,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (!mounted) return;
 
-    // After attempting connection, check if it succeeded
     if (service.isConnected) {
       final isWide = MediaQuery.of(context).size.width >= 720;
-
-      // If we are on a phone (narrow), push the screen.
-      // Used `push` instead of `pushReplacement` so the user can hit the back button
+      // Navigate only on Mobile. Tablet layout uses a Widget Switcher in the build method.
       if (!isWide) {
         Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => const ChatScreen()),
-        );
+            context, MaterialPageRoute(builder: (_) => const ChatScreen()));
       }
     }
   }
