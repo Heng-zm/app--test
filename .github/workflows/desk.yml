@@ -30,18 +30,6 @@ jobs:
         with:
           arch: x64
 
-      # ── All Flutter steps in ONE shell ─────────────────────────────────
-      # Order matters:
-      #   1. flutter config        — enables windows desktop target
-      #   2. flutter pub get       — downloads packages (first time)
-      #   3. flutter create        — generates windows/ folder & symlinks dir
-      #   4. flutter pub get AGAIN — generates .plugin_symlinks inside windows/
-      #                              flutter/ephemeral — THIS is the critical fix.
-      #                              Without this second pub get, CMake cannot find
-      #                              permission_handler_windows and other plugins.
-      #   5. build_runner          — generates Hive adapters
-      #   6. flutter build windows — compiles the app
-      # ───────────────────────────────────────────────────────────────────
       - name: 🏗️ Configure, init & build Windows app
         shell: pwsh
         run: |
@@ -52,8 +40,8 @@ jobs:
           flutter config --enable-windows-desktop
           if ($LASTEXITCODE -ne 0) { throw "flutter config failed" }
 
-          # 2. First pub get (resolve packages)
-          Write-Host "==> flutter pub get (first)"
+          # 2. First pub get
+          Write-Host "==> flutter pub get"
           flutter pub get
           if ($LASTEXITCODE -ne 0) { throw "flutter pub get failed" }
 
@@ -67,7 +55,7 @@ jobs:
           }
           Write-Host "✅ windows\ folder created"
 
-          # Patch app name in CMakeLists.txt
+          # Patch app name
           $cmake = "windows\runner\CMakeLists.txt"
           if (Test-Path $cmake) {
             (Get-Content $cmake) `
@@ -77,36 +65,70 @@ jobs:
             Write-Host "✅ CMakeLists.txt patched"
           }
 
-          # 4. Second pub get — THIS populates windows/flutter/ephemeral/.plugin_symlinks/
-          #    which CMake needs to find plugin directories like permission_handler_windows.
-          #    Skipping this causes: "is not an existing directory" CMake error.
-          Write-Host "==> flutter pub get (second — generates plugin symlinks)"
+          # 4. Second pub get
+          Write-Host "==> flutter pub get (second)"
           flutter pub get
-          if ($LASTEXITCODE -ne 0) { throw "flutter pub get (second) failed" }
+          if ($LASTEXITCODE -ne 0) { throw "flutter pub get second failed" }
 
-          # Confirm symlinks exist
-          $symlinks = "windows\flutter\ephemeral\.plugin_symlinks"
-          if (Test-Path $symlinks) {
-            Write-Host "✅ Plugin symlinks present:"
-            Get-ChildItem $symlinks | Select-Object Name
-          } else {
-            Write-Host "⚠️  Plugin symlinks dir not found at $symlinks — build may fail"
+          # 5. Manually create plugin symlinks.
+          #    flutter pub get does NOT create .plugin_symlinks on Windows CI —
+          #    it only does so during `flutter run` or when a build tool triggers
+          #    the ephemeral directory generation. We do it ourselves here by
+          #    finding each Windows plugin in the pub cache and linking it.
+          $symlinksDir = "windows\flutter\ephemeral\.plugin_symlinks"
+          New-Item -ItemType Directory -Force -Path $symlinksDir | Out-Null
+          Write-Host "==> Creating plugin symlinks in $symlinksDir"
+
+          $pubCache = $env:PUB_CACHE
+          if (!$pubCache) { $pubCache = "$env:LOCALAPPDATA\Pub\Cache" }
+          $hostedDir = Join-Path $pubCache "hosted\pub.dev"
+          Write-Host "Pub cache hosted dir: $hostedDir"
+
+          # Windows plugins that ship a /windows CMake folder
+          $windowsPlugins = @(
+            "permission_handler_windows",
+            "shared_preferences_windows",
+            "path_provider_windows",
+            "flutter_blue_plus_windows"
+          )
+
+          foreach ($plugin in $windowsPlugins) {
+            # Find the installed version folder (e.g. permission_handler_windows-0.2.1)
+            $pluginDir = Get-ChildItem $hostedDir -Directory |
+                           Where-Object { $_.Name -like "$plugin-*" } |
+                           Sort-Object Name -Descending |
+                           Select-Object -First 1
+
+            if ($pluginDir) {
+              $linkPath = Join-Path $symlinksDir $plugin
+              if (!(Test-Path $linkPath)) {
+                # Create a directory junction (works without admin on Windows CI)
+                cmd /c mklink /J "$linkPath" "$($pluginDir.FullName)" 2>&1
+                Write-Host "✅ Linked: $plugin -> $($pluginDir.FullName)"
+              } else {
+                Write-Host "ℹ️  Already exists: $plugin"
+              }
+            } else {
+              Write-Host "⚠️  Plugin not found in cache: $plugin (may not be needed on Windows)"
+            }
           }
 
-          # 5. Hive code generation
+          Write-Host "Plugin symlinks created:"
+          Get-ChildItem $symlinksDir | Select-Object Name, LinkType, Target
+
+          # 6. Hive code generation
           Write-Host "==> build_runner"
           flutter pub run build_runner build --delete-conflicting-outputs
           if ($LASTEXITCODE -ne 0) { throw "build_runner failed" }
 
-          # 6. Build
+          # 7. Build
           Write-Host "==> flutter build windows --release"
           flutter build windows --release `
             --build-number=${{ github.run_number }} `
             --build-name=1.1.${{ github.run_number }}
           if ($LASTEXITCODE -ne 0) { throw "flutter build windows failed" }
 
-          # 7. Find the .exe and export its directory for later steps
-          Write-Host "==> Locating .exe"
+          # 8. Find .exe and export path
           $exe = Get-ChildItem -Recurse "build\windows" -Filter "*.exe" |
                    Where-Object { $_.DirectoryName -match "Release" -and $_.Name -notmatch "Uninstall" } |
                    Select-Object -First 1
