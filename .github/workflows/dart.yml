@@ -29,22 +29,27 @@ jobs:
           pod install
         working-directory: .
 
-      - name: 🧹 Clean and Rename Project
-        # 1. Replaces 'com.example' with a unique name to satisfy Xcode rules
-        # 2. Strips all Team IDs and Provisioning Profiles from the project settings
+      - name: 🔓 Bypass Apple Signing & Rename
+        # 1. Renames com.example to avoid Xcode blocking the build
+        # 2. Injects CODE_SIGNING_ALLOWED=NO into the project file
+        # 3. Strips Team ID requirements
         run: |
           find . -type f \( -name "*.pbxproj" -o -name "*.xml" -o -name "*.gradle" \) -exec sed -i '' 's/com.example.material3Counter/com.kimheng.btsecurechat/g' {} +
           sed -i '' 's/DEVELOPMENT_TEAM = [^;]*;//g' ios/Runner.xcodeproj/project.pbxproj
           sed -i '' 's/PROVISIONING_PROFILE_SPECIFIER = [^;]*;//g' ios/Runner.xcodeproj/project.pbxproj
           sed -i '' 's/CODE_SIGN_STYLE = Automatic;/CODE_SIGN_STYLE = Manual;/g' ios/Runner.xcodeproj/project.pbxproj
-          sed -i '' 's/CODE_SIGN_IDENTITY = "iPhone Developer";/CODE_SIGN_IDENTITY = "";/g' ios/Runner.xcodeproj/project.pbxproj
+          sed -i '' 's/CODE_SIGNING_REQUIRED = YES;/CODE_SIGNING_REQUIRED = NO;/g' ios/Runner.xcodeproj/project.pbxproj
+          sed -i '' '/inline.*CODE_SIGNING_ALLOWED = YES;/d' ios/Runner.xcodeproj/project.pbxproj
+          # Force the project to allow unsigned builds
+          echo "CODE_SIGNING_ALLOWED=NO" >> ios/Flutter/Generated.xcconfig
+          echo "CODE_SIGNING_REQUIRED=NO" >> ios/Flutter/Generated.xcconfig
+          echo "CODE_SIGNING_IDENTITY=" >> ios/Flutter/Generated.xcconfig
 
-      - name: 🏗️ Build iOS (Force Bypass Signing)
+      - name: 🏗️ Build iOS (Unsigned)
         run: |
           flutter build ios --release --no-codesign \
             --build-number=${{ github.run_number }} \
-            --build-name=1.1.${{ github.run_number }} \
-            --xcargs="CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY='' AD_HOC_CODE_SIGNING_ALLOWED=YES"
+            --build-name=1.1.${{ github.run_number }}
 
       - name: 📦 Package IPA for Sideloading
         run: |
@@ -63,6 +68,6 @@ jobs:
           overwrite: true
           body: |
             ## 🔒 BT SecureChat Release
-            - **Build Status:** Success (Signing Bypassed)
-            - **Bundle ID:** `com.kimheng.btsecurechat`
-            - **Install Info:** This is an unsigned IPA. Use AltStore or Sideloadly to install on your iPhone.
+            - **Status:** Unsigned IPA (Success)
+            - **Installation:** Use AltStore, Sideloadly, or MapleSign.
+            - **Security:** AES-256 Obfuscated build.
