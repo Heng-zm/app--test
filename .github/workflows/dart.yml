@@ -1,11 +1,8 @@
 name: iOS-ipa-build
-
 on:
   workflow_dispatch:
-
 permissions:
   contents: write
-
 jobs:
   build-ios:
     name: 🎉 iOS Release Build
@@ -21,56 +18,78 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: 📦 Install Dependencies
+      - name: 📦 Install dependencies & generate Xcode files
         run: |
           flutter pub get
-          flutter build ios --config-only --no-codesign
-          cd ios
-          pod install
-        working-directory: .
-
-      - name: 🔓 Hard-Bypass Apple Signing
-        # This script does 3 things:
-        # 1. Renames the bundle ID globally
-        # 2. Forces Manual Signing (Stops Xcode from asking for a Team)
-        # 3. Wipes all Team and Profile IDs from the project file
-        run: |
-          find . -type f \( -name "*.pbxproj" -o -name "*.xml" -o -name "*.gradle" \) -exec sed -i '' 's/com.example.material3Counter/com.kimheng.btsecurechat/g' {} +
-          sed -i '' 's/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g' ios/Runner.xcodeproj/project.pbxproj
-          sed -i '' 's/DEVELOPMENT_TEAM = [^;]*;//g' ios/Runner.xcodeproj/project.pbxproj
-          sed -i '' 's/PROVISIONING_PROFILE_SPECIFIER = [^;]*;//g' ios/Runner.xcodeproj/project.pbxproj
-          
-          # Inject bypass directly into Flutter's internal build configs
-          echo "CODE_SIGNING_ALLOWED=NO" >> ios/Flutter/Generated.xcconfig
-          echo "CODE_SIGNING_REQUIRED=NO" >> ios/Flutter/Generated.xcconfig
-          echo "CODE_SIGNING_IDENTITY=" >> ios/Flutter/Generated.xcconfig
-          echo "EXPANDED_CODE_SIGN_IDENTITY=" >> ios/Flutter/Generated.xcconfig
-
-      - name: 🏗️ Build iOS (Unsigned)
-        # We use '--' to pass raw Xcode arguments directly
-        run: |
-          flutter build ios --release --no-codesign \
+          # --config-only generates Generated.xcconfig WITHOUT triggering a build
+          flutter build ios --release --config-only --no-codesign \
             --build-number=${{ github.run_number }} \
-            --build-name=1.1.${{ github.run_number }} \
-            -- CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGNING_IDENTITY=""
+            --build-name=1.1.${{ github.run_number }}
+          cd ios && pod install
 
-      - name: 📦 Package IPA for Sideloading
+      - name: 🔓 Patch signing AFTER Flutter config generation
+        # Must run after flutter build --config-only so Generated.xcconfig exists
         run: |
-          cd build/ios/iphoneos
-          mkdir Payload
-          cp -r Runner.app Payload/
+          PBX="ios/Runner.xcodeproj/project.pbxproj"
+
+          # Strip team & provisioning settings
+          sed -i '' 's/DEVELOPMENT_TEAM = [^;]*;//g'                    "$PBX"
+          sed -i '' 's/PROVISIONING_PROFILE_SPECIFIER = [^;]*;//g'      "$PBX"
+          sed -i '' 's/PROVISIONING_PROFILE = [^;]*;//g'                "$PBX"
+          sed -i '' 's/CODE_SIGN_STYLE = Automatic;/CODE_SIGN_STYLE = Manual;/g' "$PBX"
+          sed -i '' 's/CODE_SIGNING_REQUIRED = YES;/CODE_SIGNING_REQUIRED = NO;/g' "$PBX"
+          sed -i '' 's/CODE_SIGN_IDENTITY = [^;]*;//g'                  "$PBX"
+
+          # Append to Generated.xcconfig (file now exists after --config-only)
+          {
+            echo "CODE_SIGNING_ALLOWED=NO"
+            echo "CODE_SIGNING_REQUIRED=NO"
+            echo "CODE_SIGNING_IDENTITY="
+            echo "DEVELOPMENT_TEAM="
+          } >> ios/Flutter/Generated.xcconfig
+
+          # Also patch the Flutter-specific xcconfig if present
+          for f in ios/Flutter/Release.xcconfig ios/Flutter/Debug.xcconfig; do
+            [ -f "$f" ] && {
+              echo "CODE_SIGNING_ALLOWED=NO" >> "$f"
+              echo "CODE_SIGNING_REQUIRED=NO" >> "$f"
+            }
+          done
+
+      - name: 🏗️ Build with xcodebuild directly (bypasses Flutter re-patching)
+        run: |
+          xcodebuild \
+            -workspace ios/Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            MARKETING_VERSION=1.1.${{ github.run_number }} \
+            build
+
+      - name: 📦 Package IPA for sideloading
+        run: |
+          APP_PATH=$(find build/DerivedData -name "Runner.app" -path "*/Release-iphoneos/*" | head -1)
+          mkdir -p Payload
+          cp -r "$APP_PATH" Payload/Runner.app
           zip -qq -r -9 BT-SecureChat.ipa Payload
-          
+
       - name: 🚀 Upload to GitHub Releases
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: build/ios/iphoneos/BT-SecureChat.ipa
+          file: BT-SecureChat.ipa
           asset_name: BT-SecureChat-v1.1.${{ github.run_number }}.ipa
           tag: v1.1.${{ github.run_number }}
           overwrite: true
           body: |
             ## 🔒 BT SecureChat Release
-            - **Status:** Unsigned IPA (Build Successful)
-            - **Target:** iOS 13.0+
-            - **Installation:** Sideload via AltStore / Sideloadly.
+            - **Status:** Unsigned IPA (sideloadable)
+            - **Installation:** AltStore, Sideloadly, or MapleSign
+            - **Build:** 1.1.${{ github.run_number }}
