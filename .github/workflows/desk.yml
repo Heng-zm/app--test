@@ -12,15 +12,9 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      # ──────────────────────────────────────────────────────────────────
-      # 1. Checkout
-      # ──────────────────────────────────────────────────────────────────
       - name: 📥 Checkout repository
         uses: actions/checkout@v4
 
-      # ──────────────────────────────────────────────────────────────────
-      # 2. Flutter 3.27.4
-      # ──────────────────────────────────────────────────────────────────
       - name: 🛠️ Setup Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -28,52 +22,52 @@ jobs:
           channel: 'stable'
           cache: true
 
-      # ──────────────────────────────────────────────────────────────────
-      # 3. Setup Visual Studio build tools (required for CMake/MSBuild)
-      #    windows-latest has VS installed but we must ensure the C++
-      #    Desktop workload is available for Flutter Windows compilation
-      # ──────────────────────────────────────────────────────────────────
       - name: 🔧 Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      - name: 🔧 Setup Visual Studio Developer Command Prompt
+      - name: 🔧 Setup MSVC dev environment
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
 
-      # ──────────────────────────────────────────────────────────────────
-      # 4. Enable Windows desktop, init project, generate code, build
-      #    All in ONE shell to avoid inter-step config propagation issues
-      # ──────────────────────────────────────────────────────────────────
-      - name: 🏗️ Setup, init & build Windows app
+      # ── All Flutter steps in ONE shell ─────────────────────────────────
+      # Order matters:
+      #   1. flutter config        — enables windows desktop target
+      #   2. flutter pub get       — downloads packages (first time)
+      #   3. flutter create        — generates windows/ folder & symlinks dir
+      #   4. flutter pub get AGAIN — generates .plugin_symlinks inside windows/
+      #                              flutter/ephemeral — THIS is the critical fix.
+      #                              Without this second pub get, CMake cannot find
+      #                              permission_handler_windows and other plugins.
+      #   5. build_runner          — generates Hive adapters
+      #   6. flutter build windows — compiles the app
+      # ───────────────────────────────────────────────────────────────────
+      - name: 🏗️ Configure, init & build Windows app
         shell: pwsh
         run: |
-          Set-StrictMode -Off
           $ErrorActionPreference = "Stop"
 
-          # ── Enable Windows desktop ─────────────────────────────────
+          # 1. Enable Windows desktop
           Write-Host "==> flutter config --enable-windows-desktop"
           flutter config --enable-windows-desktop
-          if ($LASTEXITCODE -ne 0) { Write-Host "❌ flutter config failed"; exit 1 }
+          if ($LASTEXITCODE -ne 0) { throw "flutter config failed" }
 
-          # ── pub get ────────────────────────────────────────────────
-          Write-Host "==> flutter pub get"
+          # 2. First pub get (resolve packages)
+          Write-Host "==> flutter pub get (first)"
           flutter pub get
-          if ($LASTEXITCODE -ne 0) { Write-Host "❌ flutter pub get failed"; exit 1 }
+          if ($LASTEXITCODE -ne 0) { throw "flutter pub get failed" }
 
-          # ── Create windows/ folder ─────────────────────────────────
+          # 3. Create windows/ folder
           Write-Host "==> flutter create --platforms=windows ."
           flutter create --platforms=windows .
-          if ($LASTEXITCODE -ne 0) { Write-Host "❌ flutter create failed"; exit 1 }
+          if ($LASTEXITCODE -ne 0) { throw "flutter create failed" }
 
-          # Confirm windows/ was created
           if (!(Test-Path "windows\CMakeLists.txt")) {
-            Write-Host "❌ windows\CMakeLists.txt still missing after flutter create"
-            exit 1
+            throw "windows\CMakeLists.txt missing after flutter create"
           }
-          Write-Host "✅ windows\CMakeLists.txt exists"
+          Write-Host "✅ windows\ folder created"
 
-          # ── Patch app name ─────────────────────────────────────────
+          # Patch app name in CMakeLists.txt
           $cmake = "windows\runner\CMakeLists.txt"
           if (Test-Path $cmake) {
             (Get-Content $cmake) `
@@ -83,56 +77,58 @@ jobs:
             Write-Host "✅ CMakeLists.txt patched"
           }
 
-          # ── Hive code generation ───────────────────────────────────
+          # 4. Second pub get — THIS populates windows/flutter/ephemeral/.plugin_symlinks/
+          #    which CMake needs to find plugin directories like permission_handler_windows.
+          #    Skipping this causes: "is not an existing directory" CMake error.
+          Write-Host "==> flutter pub get (second — generates plugin symlinks)"
+          flutter pub get
+          if ($LASTEXITCODE -ne 0) { throw "flutter pub get (second) failed" }
+
+          # Confirm symlinks exist
+          $symlinks = "windows\flutter\ephemeral\.plugin_symlinks"
+          if (Test-Path $symlinks) {
+            Write-Host "✅ Plugin symlinks present:"
+            Get-ChildItem $symlinks | Select-Object Name
+          } else {
+            Write-Host "⚠️  Plugin symlinks dir not found at $symlinks — build may fail"
+          }
+
+          # 5. Hive code generation
           Write-Host "==> build_runner"
           flutter pub run build_runner build --delete-conflicting-outputs
-          if ($LASTEXITCODE -ne 0) { Write-Host "❌ build_runner failed"; exit 1 }
+          if ($LASTEXITCODE -ne 0) { throw "build_runner failed" }
 
-          # ── Flutter doctor (shows if Windows toolchain is OK) ──────
-          Write-Host "==> flutter doctor -v"
-          flutter doctor -v
-
-          # ── Build Windows release (verbose) ───────────────────────
-          Write-Host "==> flutter build windows --release -v"
-          flutter build windows --release -v `
+          # 6. Build
+          Write-Host "==> flutter build windows --release"
+          flutter build windows --release `
             --build-number=${{ github.run_number }} `
             --build-name=1.1.${{ github.run_number }}
-          if ($LASTEXITCODE -ne 0) { Write-Host "❌ flutter build windows failed"; exit 1 }
+          if ($LASTEXITCODE -ne 0) { throw "flutter build windows failed" }
 
-          # ── Find the .exe (path varies slightly by Flutter version) ─
-          Write-Host "==> Locating built .exe"
+          # 7. Find the .exe and export its directory for later steps
+          Write-Host "==> Locating .exe"
           $exe = Get-ChildItem -Recurse "build\windows" -Filter "*.exe" |
                    Where-Object { $_.DirectoryName -match "Release" -and $_.Name -notmatch "Uninstall" } |
                    Select-Object -First 1
 
           if (!$exe) {
-            Write-Host "❌ No release .exe found. Full build tree:"
+            Write-Host "❌ No .exe found. Build tree:"
             Get-ChildItem -Recurse "build\windows" | Select-Object FullName
-            exit 1
+            throw "EXE not found after build"
           }
 
-          Write-Host "✅ EXE: $($exe.FullName)"
-          # Export the directory for later steps
-          $releaseDir = $exe.DirectoryName
-          "RELEASE_DIR=$releaseDir" | Out-File -FilePath $env:GITHUB_ENV -Append
-          Write-Host "✅ RELEASE_DIR=$releaseDir"
+          Write-Host "✅ EXE: $($exe.FullName) ($('{0:N2}' -f ($exe.Length/1MB)) MB)"
+          "RELEASE_DIR=$($exe.DirectoryName)" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      # ──────────────────────────────────────────────────────────────────
-      # 5. Install NSIS
-      # ──────────────────────────────────────────────────────────────────
       - name: 📥 Install NSIS
         run: choco install nsis --yes
 
-      # ──────────────────────────────────────────────────────────────────
-      # 6. Create NSIS installer
-      # ──────────────────────────────────────────────────────────────────
       - name: 🔨 Create NSIS installer
         shell: pwsh
         run: |
           $version    = "1.1.${{ github.run_number }}"
           $releaseDir = $env:RELEASE_DIR
-
-          Write-Host "Building installer from: $releaseDir"
+          Write-Host "Packaging from: $releaseDir"
 
           $script = @'
           Unicode true
@@ -176,30 +172,23 @@ jobs:
           SectionEnd
           '@
 
-          $script = $script -replace 'APPVER',    $version
+          $script = $script -replace 'APPVER',   $version
           $script = $script -replace 'BUILDDIR',  $releaseDir
           $script | Out-File -FilePath "installer.nsi" -Encoding UTF8
 
           makensis installer.nsi
-          if ($LASTEXITCODE -ne 0) { Write-Host "❌ makensis failed"; exit 1 }
-          Write-Host "✅ Installer created: BT-SecureChat-Setup-v$version.exe"
+          if ($LASTEXITCODE -ne 0) { throw "makensis failed" }
+          Write-Host "✅ Installer: BT-SecureChat-Setup-v$version.exe"
 
-      # ──────────────────────────────────────────────────────────────────
-      # 7. Package portable ZIP
-      # ──────────────────────────────────────────────────────────────────
       - name: 📦 Package portable ZIP
         shell: pwsh
         run: |
           $version    = "1.1.${{ github.run_number }}"
           $releaseDir = $env:RELEASE_DIR
           $dest       = "BT-SecureChat-Portable-v$version.zip"
-
           Compress-Archive -Path "$releaseDir\*" -DestinationPath $dest
           Write-Host "✅ $dest ($('{0:N2}' -f ((Get-Item $dest).Length/1MB)) MB)"
 
-      # ──────────────────────────────────────────────────────────────────
-      # 8. Upload Setup EXE
-      # ──────────────────────────────────────────────────────────────────
       - name: 🚀 Upload Setup EXE to GitHub Releases
         uses: svenstaro/upload-release-action@v2
         with:
@@ -228,9 +217,6 @@ jobs:
             - Windows 10 / 11 (x64)
             - No additional runtime required
 
-      # ──────────────────────────────────────────────────────────────────
-      # 9. Upload Portable ZIP
-      # ──────────────────────────────────────────────────────────────────
       - name: 🚀 Upload Portable ZIP to GitHub Releases
         uses: svenstaro/upload-release-action@v2
         with:
