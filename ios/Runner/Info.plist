@@ -2,101 +2,35 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <!-- 1. Identity and Project Naming -->
-    <key>CFBundleDevelopmentRegion</key>
-    <string>$(DEVELOPMENT_LANGUAGE)</string>
+    <key>CFBundleIdentifier</key>
+    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundleName</key>
+    <string>bt_secure_chat</string>
     <key>CFBundleDisplayName</key>
     <string>BT SecureChat</string>
     <key>CFBundleExecutable</key>
     <string>$(EXECUTABLE_NAME)</string>
-    <key>CFBundleIdentifier</key>
-    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-    <key>CFBundleInfoDictionaryVersion</key>
-    <string>6.0</string>
-    <key>CFBundleName</key>
-    <string>bt_secure_chat</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
-    <key>CFBundleShortVersionString</key>
-    <string>$(FLUTTER_BUILD_NAME)</string>
-    <key>CFBundleSignature</key>
-    <string>????</string>
-    <key>CFBundleVersion</key>
-    <string>$(FLUTTER_BUILD_NUMBER)</string>
     <key>LSRequiresIPhoneOS</key>
     <true/>
-
-    <!-- 2. Performance and Rendering -->
+    <!-- Bluetooth Keys -->
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>BT SecureChat uses Bluetooth for offline messaging.</string>
+    <key>NSBluetoothPeripheralUsageDescription</key>
+    <string>BT SecureChat uses Bluetooth for offline messaging.</string>
+    <!-- Performance -->
     <key>CADisableMinimumFrameDurationOnPhone</key>
     <true/>
     <key>FLTEnableImpeller</key>
     <true/>
-
-    <!-- 3. Bluetooth Permissions (Core App Logic) -->
-    <key>NSBluetoothAlwaysUsageDescription</key>
-    <string>BT SecureChat uses Bluetooth to discover and connect to nearby nodes for encrypted offline messaging.</string>
-    <key>NSBluetoothPeripheralUsageDescription</key>
-    <string>We need Bluetooth peripheral access to allow other devices to establish a secure link with your node.</string>
-
-    <!-- 4. Location Permissions (Radio Discovery Support) -->
-    <key>NSLocationWhenInUseUsageDescription</key>
-    <string>iOS requires location access to scan for nearby Bluetooth radio signatures.</string>
-    <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-    <string>Background location allows the secure terminal to maintain connection integrity while the app is closed.</string>
-
-    <!-- 5. Media & File Sharing Permissions -->
-    <key>NSCameraUsageDescription</key>
-    <string>Camera access is required to capture secure images to send through the encrypted tunnel.</string>
-    <key>NSMicrophoneUsageDescription</key>
-    <string>Microphone access is needed for recording encrypted voice transmissions.</string>
-    <key>NSPhotoLibraryUsageDescription</key>
-    <string>We need access to your library to allow you to select and encrypt existing media files.</string>
-    <key>NSPhotoLibraryAddUsageDescription</key>
-    <string>Permission is required to save decrypted media received from other nodes into your gallery.</string>
-
-    <!-- 6. Security & Encryption Compliance -->
-    <key>ITSAppUsesNonExemptEncryption</key>
-    <false/>
-    <key>NSAppTransportSecurity</key>
-    <dict>
-        <key>NSAllowsArbitraryLoads</key>
-        <false/>
-    </dict>
-
-    <!-- 7. Background Operational Modes -->
-    <key>UIBackgroundModes</key>
-    <array>
-        <string>bluetooth-central</string>
-        <string>bluetooth-peripheral</string>
-    </array>
-
-    <!-- 8. Appearance & Status Bar -->
     <key>UIUserInterfaceStyle</key>
     <string>Dark</string>
-    <key>UIStatusBarStyle</key>
-    <string>UIStatusBarStyleLightContent</string>
-    <key>UIViewControllerBasedStatusBarAppearance</key>
-    <false/>
     <key>UILaunchStoryboardName</key>
     <string>LaunchScreen</string>
     <key>UIMainStoryboardFile</key>
     <string>Main</string>
-
-    <!-- 9. Supported Device Orientations -->
-    <key>UISupportedInterfaceOrientations</key>
-    <array>
-        <string>UIInterfaceOrientationPortrait</string>
-    </array>
-    <key>UISupportedInterfaceOrientations~ipad</key>
-    <array>
-        <string>UIInterfaceOrientationPortrait</string>
-        <string>UIInterfaceOrientationPortraitUpsideDown</string>
-        <string>UIInterfaceOrientationLandscapeLeft</string>
-        <string>UIInterfaceOrientationLandscapeRight</string>
-    </array>
-
-    <!-- 10. Flutter Engine Metadata -->
-    <key>UIApplicationSupportsIndirectInputEvents</key>
-    <true/>
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
 </dict>
 </plist>
