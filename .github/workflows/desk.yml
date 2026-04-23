@@ -28,44 +28,69 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: 🏗️ Prepare & Build Windows App
+      - name: 🏗️ Prepare, Patch & Manual Build
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
-          # 1. Force enable windows and REPAIR the project files
-          # This fixes the "No Windows desktop project configured" error
+          # 1. Initialize Flutter project
           flutter config --enable-windows-desktop
           flutter create --platforms=windows .
-          
           flutter pub get
-
-          # 2. Run code generation
           flutter pub run build_runner build --delete-conflicting-outputs
 
-          # 3. Patch CMakeLists.txt for Binary Name and App ID
-          $cmake = "windows\runner\CMakeLists.txt"
-          if (Test-Path $cmake) {
-            (Get-Content $cmake) `
-              -replace 'set\(BINARY_NAME "[^"]*"\)',    'set(BINARY_NAME "bluetooth_chat")' `
-              -replace 'set\(APPLICATION_ID "[^"]*"\)', 'set(APPLICATION_ID "com.kimheng.btsecurechat")' |
-            Set-Content $cmake
-            Write-Host "✅ CMakeLists.txt patched"
+          # 2. Patch CMakeLists.txt (Standard Setup)
+          $cmakeMain = "windows\runner\CMakeLists.txt"
+          (Get-Content $cmakeMain) `
+            -replace 'set\(BINARY_NAME "[^"]*"\)',    'set(BINARY_NAME "bluetooth_chat")' `
+            -replace 'set\(APPLICATION_ID "[^"]*"\)', 'set(APPLICATION_ID "com.kimheng.btsecurechat")' |
+          Set-Content $cmakeMain
+
+          # 3. Generate Build Files (This creates the ephemeral folder)
+          # We use the raw cmake command so we can intercept the plugins file
+          $buildDir = "build/windows/x64"
+          New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
+          
+          Write-Host "==> Generating CMake project..."
+          cmake -S windows -B $buildDir -G "Visual Studio 17 2022" -A x64 -DFLUTTER_TARGET_PLATFORM=windows-x64
+
+          # 4. THE FIX: Patch generated_plugins.cmake to use Absolute Paths
+          # This prevents the "directory not found" symlink error
+          $genPlugins = "windows\flutter\ephemeral\generated_plugins.cmake"
+          if (!(Test-Path $genPlugins)) { 
+             $genPlugins = Get-ChildItem -Recurse -Filter "generated_plugins.cmake" | Select-Object -First 1 -ExpandProperty FullName
           }
 
-          # 4. Build the application
-          flutter build windows --release `
-            --build-number=${{ github.run_number }} `
-            --build-name=1.1.${{ github.run_number }}
+          Write-Host "✅ Patching: $genPlugins"
+          $pubCache = if ($env:PUB_CACHE) { $env:PUB_CACHE } else { "$env:USERPROFILE\.pub-cache" }
+          $hostedDir = Join-Path $pubCache "hosted/pub.dev"
+          $content = Get-Content $genPlugins -Raw
 
-          # 5. Export the build path
+          # Find all plugin symlink references and replace them with real paths from pub cache
+          $pluginRefs = [regex]::Matches($content, '\.plugin_symlinks[/\\]([^/\\"]+)')
+          foreach ($match in $pluginRefs) {
+            $pluginName = $match.Groups[1].Value
+            $pluginDir = Get-ChildItem $hostedDir -Directory | Where-Object { $_.Name -like "$pluginName-*" } | Sort-Object Name -Descending | Select-Object -First 1
+            if ($pluginDir) {
+              $realPath = $pluginDir.FullName.Replace('\', '/')
+              $content = $content -replace [regex]::Escape(".plugin_symlinks/$pluginName"), $realPath
+              $content = $content -replace [regex]::Escape(".plugin_symlinks\$pluginName"), $realPath
+              Write-Host "   -> Mapped $pluginName to $realPath"
+            }
+          }
+          $content | Set-Content $genPlugins -NoNewline
+
+          # 5. Manual Compilation (Bypassing 'flutter build' to keep our patches)
+          Write-Host "==> Compiling Release Build..."
+          cmake --build $buildDir --config Release --target INSTALL
+
+          # 6. Locate the resulting EXE
           $exe = Get-ChildItem -Recurse "build\windows" -Filter "bluetooth_chat.exe" |
-                 Where-Object { $_.DirectoryName -match "Release" } |
-                 Select-Object -First 1
-
-          if (!$exe) { throw "Build failed: bluetooth_chat.exe not found" }
-          Write-Host "✅ Found EXE at: $($exe.FullName)"
+                 Where-Object { $_.DirectoryName -match "Release" } | Select-Object -First 1
+          
+          if (!$exe) { throw "Build failed: EXE not found" }
           "RELEASE_DIR=$($exe.DirectoryName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "✅ Build Success: $($exe.FullName)"
 
       - name: 📥 Install NSIS
         run: choco install nsis --yes
@@ -73,10 +98,8 @@ jobs:
       - name: 🔨 Create NSIS installer
         shell: pwsh
         run: |
-          $version    = "1.1.${{ github.run_number }}"
+          $version = "1.1.${{ github.run_number }}"
           $releaseDir = $env:RELEASE_DIR
-          
-          # Using single-quote here-string (@' ... '@) so PowerShell doesn't expand $ symbols
           $script = @'
           Unicode true
           !define APP_NAME    "BT SecureChat"
@@ -88,7 +111,6 @@ jobs:
           Name           "${APP_NAME} ${APP_VERSION}"
           OutFile        "BT-SecureChat-Setup-v${APP_VERSION}.exe"
           InstallDir     "$PROGRAMFILES64\BT SecureChat"
-          InstallDirRegKey HKLM "Software\BT SecureChat" "Install_Dir"
           RequestExecutionLevel admin
           SetCompressor lzma
 
@@ -99,43 +121,19 @@ jobs:
             SetOutPath "$INSTDIR"
             File /r "${BUILD_DIR}\*.*"
             WriteUninstaller "$INSTDIR\Uninstall.exe"
-            CreateDirectory "$SMPROGRAMS\BT SecureChat"
-            CreateShortcut  "$SMPROGRAMS\BT SecureChat\BT SecureChat.lnk" "$INSTDIR\${APP_EXE}"
-            CreateShortcut  "$SMPROGRAMS\BT SecureChat\Uninstall.lnk"     "$INSTDIR\Uninstall.exe"
-            CreateShortcut  "$DESKTOP\BT SecureChat.lnk"                  "$INSTDIR\${APP_EXE}"
-            
-            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\BT SecureChat" "DisplayName"     "${APP_NAME}"
-            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\BT SecureChat" "UninstallString" "$INSTDIR\Uninstall.exe"
-            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\BT SecureChat" "DisplayVersion"  "${APP_VERSION}"
-            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\BT SecureChat" "Publisher"       "${PUBLISHER}"
+            CreateShortcut "$DESKTOP\BT SecureChat.lnk" "$INSTDIR\${APP_EXE}"
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\BT SecureChat" "DisplayName" "${APP_NAME}"
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\BT SecureChat" "Publisher" "${PUBLISHER}"
           SectionEnd
 
           Section "Uninstall"
-            RMDir  /r "$INSTDIR"
-            Delete "$SMPROGRAMS\BT SecureChat\BT SecureChat.lnk"
-            Delete "$SMPROGRAMS\BT SecureChat\Uninstall.lnk"
-            RMDir  "$SMPROGRAMS\BT SecureChat"
+            RMDir /r "$INSTDIR"
             Delete "$DESKTOP\BT SecureChat.lnk"
-            DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\BT SecureChat"
-            DeleteRegKey HKLM "Software\BT SecureChat"
           SectionEnd
           '@
-
-          # Manually replace placeholders to avoid PowerShell escaping issues
-          $script = $script -replace 'APPVER', $version
-          $script = $script -replace 'BUILDDIR', $releaseDir
-          $script | Out-File -FilePath "installer.nsi" -Encoding UTF8
-          
+          $script = $script -replace 'APPVER', $version -replace 'BUILDDIR', $releaseDir
+          $script | Out-File "installer.nsi" -Encoding UTF8
           makensis installer.nsi
-          Write-Host "✅ Installer created."
-
-      - name: 📦 Package portable ZIP
-        shell: pwsh
-        run: |
-          $version    = "1.1.${{ github.run_number }}"
-          $releaseDir = $env:RELEASE_DIR
-          $dest       = "BT-SecureChat-Portable-v$version.zip"
-          Compress-Archive -Path "$releaseDir\*" -DestinationPath $dest
 
       - name: 🚀 Upload Assets
         uses: svenstaro/upload-release-action@v2
@@ -145,6 +143,3 @@ jobs:
           file_glob: true
           tag: v1.1.${{ github.run_number }}
           overwrite: true
-          body: |
-            ## 🔒 BT SecureChat — v1.1.${{ github.run_number }}
-            Developed by **Ozo.Designer**
