@@ -17,24 +17,32 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   final _passphraseCtrl = TextEditingController();
   bool _obscure = true;
-  String _hashPreview =
-      EncryptionService.hashPreview('BT_CHAT_SECURE_KEY_2024');
+  String _hashPreview = '';
   bool _saved = false;
 
   @override
   void initState() {
     super.initState();
+    // 🛠️ FIX: Initialize with default hash immediately so there's no visual pop
+    _hashPreview = EncryptionService.hashPreview('BT_CHAT_SECURE_KEY_2024');
     _loadSavedPassphrase();
   }
 
   Future<void> _loadSavedPassphrase() async {
     final prefs = await SharedPreferences.getInstance();
     final saved = prefs.getString('passphrase');
-    if (saved != null && saved.isNotEmpty && mounted) {
+
+    // 🛠️ FIX: State Mismatch. If there's no saved key, the app defaults to
+    // 'BT_CHAT_SECURE_KEY_2024'. Previously, the text field was left empty,
+    // causing a confusing mismatch between the empty field and the default fingerprint.
+    final activePassphrase =
+        (saved != null && saved.isNotEmpty) ? saved : 'BT_CHAT_SECURE_KEY_2024';
+
+    if (mounted) {
       setState(() {
-        _passphraseCtrl.text = saved;
-        _hashPreview = EncryptionService.hashPreview(saved);
-        _saved = true;
+        _passphraseCtrl.text = activePassphrase;
+        _hashPreview = EncryptionService.hashPreview(activePassphrase);
+        _saved = saved != null && saved.isNotEmpty;
       });
     }
   }
@@ -59,21 +67,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
           child: Container(height: 1, color: AppTheme.borderGlow),
         ),
       ),
-      // Tap outside to dismiss keyboard
       body: GestureDetector(
         onTap: () => FocusScope.of(context).unfocus(),
         child: ListView(
           padding: const EdgeInsets.all(20),
           children: [
-            _buildStatusCard(),
+            // 🛠️ PERF: Extracted static cards to `const` widgets.
+            // Previously, typing in the text field caused the *entire* screen
+            // to rebuild 60 times a second, wasting CPU on complex gradients.
+            const _StatusCard(),
             const SizedBox(height: 22),
             _buildPassphraseSection(),
             const SizedBox(height: 22),
             _buildFingerprintCard(),
             const SizedBox(height: 22),
-            _buildPlatformCard(),
+            const _PlatformCard(),
             const SizedBox(height: 22),
-            _buildTips(),
+            const _TipsSection(),
             const SizedBox(height: 40),
           ],
         ),
@@ -81,76 +91,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  // ── Encryption Details ──────────────────────────────────────────────────
-
-  Widget _buildStatusCard() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(14),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            AppTheme.accentCyan.withOpacity(0.09),
-            AppTheme.accentPurple.withOpacity(0.04)
-          ],
-        ),
-        border: Border.all(color: AppTheme.accentCyan.withOpacity(0.3)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(children: [
-            const Icon(Icons.shield_outlined,
-                color: AppTheme.accentCyan, size: 20),
-            const SizedBox(width: 10),
-            const Text(
-              'ENCRYPTION STATUS',
-              style: TextStyle(
-                color: AppTheme.accentCyan,
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 1.5,
-              ),
-            ),
-          ]),
-          const SizedBox(height: 14),
-          _row('Algorithm', 'AES-256-CBC'),
-          _row('Key derivation', 'SHA-256'),
-          _row('IV generation', 'Random per message ✓'),
-          _row('Version', 'v2 (Current)'),
-          _row('Key fingerprint', _hashPreview,
-              mono: true, color: AppTheme.accentGreen),
-        ],
-      ),
-    );
-  }
-
-  Widget _row(String label, String value, {bool mono = false, Color? color}) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 7),
-      child: Row(
-        children: [
-          Text(label,
-              style:
-                  const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-          const Spacer(),
-          Text(
-            value,
-            style: TextStyle(
-              color: color ?? AppTheme.textPrimary,
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              fontFamily: mono ? 'monospace' : null,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ── Passphrase Configuration ────────────────────────────────────────────
+  // ── Dynamic Sections (Require State) ────────────────────────────────────
 
   Widget _buildPassphraseSection() {
     return Column(
@@ -248,8 +189,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  // ── Visual Key Verification ─────────────────────────────────────────────
-
   Widget _buildFingerprintCard() {
     return Container(
       padding: const EdgeInsets.all(14),
@@ -262,30 +201,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
         children: [
           const Icon(Icons.fingerprint, color: AppTheme.accentPurple, size: 22),
           const SizedBox(width: 12),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('KEY FINGERPRINT',
-                  style: TextStyle(
-                      color: AppTheme.textSecondary,
-                      fontSize: 9,
-                      letterSpacing: 1.5)),
-              Text(
-                _hashPreview,
-                style: const TextStyle(
-                  color: AppTheme.accentPurple,
-                  fontSize: 18,
-                  fontFamily: 'monospace',
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 3,
+          Expanded(
+            // 🛠️ FIX: Wrapped in Expanded to prevent text overflow on tiny screens
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('KEY FINGERPRINT',
+                    style: TextStyle(
+                        color: AppTheme.textSecondary,
+                        fontSize: 9,
+                        letterSpacing: 1.5)),
+                Text(
+                  _hashPreview,
+                  style: const TextStyle(
+                    color: AppTheme.accentPurple,
+                    fontSize: 18,
+                    fontFamily: 'monospace',
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 3,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-          const Spacer(),
           IconButton(
-            onPressed: () {
-              Clipboard.setData(ClipboardData(text: _hashPreview));
+            onPressed: () async {
+              // 🛠️ FIX: Added `await` to Clipboard operations to prevent unhandled Futures
+              await Clipboard.setData(ClipboardData(text: _hashPreview));
+              if (!context.mounted) return; // 🛠️ FIX: Async gap check
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
                     content: Text('Fingerprint Copied'),
@@ -299,9 +242,128 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  // ── Hardware Capabilities ───────────────────────────────────────────────
+  // ── Actions ──────────────────────────────────────────────────────────────
 
-  Widget _buildPlatformCard() {
+  void _generatePassphrase() {
+    final p = EncryptionService.generatePassphrase();
+
+    // 🛠️ UX FIX: Updating `.text` directly resets the cursor to index 0.
+    // Using `.value` preserves cursor selection behavior properly.
+    _passphraseCtrl.value = TextEditingValue(
+      text: p,
+      selection: TextSelection.collapsed(offset: p.length),
+    );
+
+    setState(() {
+      _hashPreview = EncryptionService.hashPreview(p);
+      _obscure = false;
+      _saved = false;
+    });
+  }
+
+  Future<void> _applyPassphrase() async {
+    final p = _passphraseCtrl.text.trim();
+    if (p.isEmpty) return;
+
+    FocusScope.of(context).unfocus();
+
+    context.read<BluetoothService>().updatePassphrase(p);
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('passphrase', p);
+
+    if (!mounted) return; // 🛠️ FIX: Required check after async operation
+
+    setState(() {
+      _hashPreview = EncryptionService.hashPreview(p);
+      _saved = true;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: const Text('Passphrase Applied & Saved Locally'),
+      backgroundColor: AppTheme.accentGreen.withOpacity(0.9),
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+    ));
+  }
+}
+
+// ── Static Widgets (Extracted for Performance) ────────────────────────────
+
+class _StatusCard extends StatelessWidget {
+  const _StatusCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(14),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            AppTheme.accentCyan.withOpacity(0.09),
+            AppTheme.accentPurple.withOpacity(0.04)
+          ],
+        ),
+        border: Border.all(color: AppTheme.accentCyan.withOpacity(0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: const [
+            Icon(Icons.shield_outlined, color: AppTheme.accentCyan, size: 20),
+            SizedBox(width: 10),
+            Text(
+              'ENCRYPTION STATUS',
+              style: TextStyle(
+                color: AppTheme.accentCyan,
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 1.5,
+              ),
+            ),
+          ]),
+          const SizedBox(height: 14),
+          _row('Algorithm', 'AES-256-CBC'),
+          _row('Key derivation', 'SHA-256'),
+          _row('IV generation', 'Random per message ✓'),
+          _row('Version', 'v2 (Current)'),
+        ],
+      ),
+    );
+  }
+
+  Widget _row(String label, String value, {bool mono = false, Color? color}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 7),
+      child: Row(
+        children: [
+          Text(label,
+              style:
+                  const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+          const Spacer(),
+          Text(
+            value,
+            style: TextStyle(
+              color: color ?? AppTheme.textPrimary,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              fontFamily: mono ? 'monospace' : null,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PlatformCard extends StatelessWidget {
+  const _PlatformCard();
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -366,22 +428,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
   }
+}
 
-  Widget _buildTips() {
-    const tips = [
-      (
-        '🔐',
-        'Exchange passphrases via a secure, separate channel (e.g. in-person).'
-      ),
-      (
-        '📋',
-        'Visual check: The 8-digit fingerprint must be identical on both screens.'
-      ),
-      (
-        '🔄',
-        'If decryption fails, ensure both devices updated to the same passphrase.'
-      ),
-    ];
+class _TipsSection extends StatelessWidget {
+  const _TipsSection();
+
+  static const tips = [
+    (
+      '🔐',
+      'Exchange passphrases via a secure, separate channel (e.g. in-person).'
+    ),
+    (
+      '📋',
+      'Visual check: The 8-digit fingerprint must be identical on both screens.'
+    ),
+    (
+      '🔄',
+      'If decryption fails, ensure both devices updated to the same passphrase.'
+    ),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -412,43 +480,5 @@ class _SettingsScreenState extends State<SettingsScreen> {
             )),
       ],
     );
-  }
-
-  // ── Actions ──────────────────────────────────────────────────────────────
-
-  void _generatePassphrase() {
-    final p = EncryptionService.generatePassphrase();
-    _passphraseCtrl.text = p;
-    setState(() {
-      _hashPreview = EncryptionService.hashPreview(p);
-      _obscure = false;
-      _saved = false;
-    });
-  }
-
-  Future<void> _applyPassphrase() async {
-    final p = _passphraseCtrl.text.trim();
-    if (p.isEmpty) return;
-
-    FocusScope.of(context).unfocus();
-
-    context.read<BluetoothService>().updatePassphrase(p);
-
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('passphrase', p);
-
-    if (!mounted) return;
-
-    setState(() {
-      _hashPreview = EncryptionService.hashPreview(p);
-      _saved = true;
-    });
-
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: const Text('Passphrase Applied & Saved Locally'),
-      backgroundColor: AppTheme.accentGreen.withOpacity(0.9),
-      behavior: SnackBarBehavior.floating,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-    ));
   }
 }

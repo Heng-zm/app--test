@@ -12,7 +12,8 @@ class EncryptionService {
 
   late enc.Key _key;
   late enc.Encrypter _encrypter;
-  String _passphrase = _defaultPassphrase;
+  late enc.IV
+      _legacyIv; // 🛠️ FIX: Cached to avoid recalculating MD5 per message
 
   EncryptionService({String? passphrase}) {
     _initKey(passphrase ?? _defaultPassphrase);
@@ -20,13 +21,14 @@ class EncryptionService {
 
   /// Derives a 32-byte key using SHA-256 and initializes the AES engine.
   void _initKey(String passphrase) {
-    _passphrase = passphrase;
-    // Derive 256-bit key from variable length passphrase
     final keyBytes = sha256.convert(utf8.encode(passphrase)).bytes;
     _key = enc.Key(Uint8List.fromList(keyBytes));
-
-    // We use CBC mode with PKCS7 padding
     _encrypter = enc.Encrypter(enc.AES(_key, mode: enc.AESMode.cbc));
+
+    // 🛠️ PERF: Pre-calculate the legacy IV once when the key changes.
+    // Previously, md5.convert(...) ran on every single legacy message received.
+    final ivBytes = md5.convert(utf8.encode(passphrase)).bytes;
+    _legacyIv = enc.IV(Uint8List.fromList(ivBytes));
   }
 
   /// Encrypts text and prepends a random 16-byte IV.
@@ -36,7 +38,6 @@ class EncryptionService {
       final iv = enc.IV.fromSecureRandom(16);
       final encrypted = _encrypter.encrypt(plaintext, iv: iv);
 
-      // Create a combined buffer: [IV (16 bytes)][Encrypted Bytes]
       final combined = Uint8List(16 + encrypted.bytes.length)
         ..setRange(0, 16, iv.bytes)
         ..setRange(16, 16 + encrypted.bytes.length, encrypted.bytes);
@@ -49,30 +50,44 @@ class EncryptionService {
 
   /// Decrypts payload. Tries v2 (Random IV) first, then falls back to v1 (Legacy).
   String decrypt(String payload) {
-    try {
-      final combined = base64.decode(payload);
+    Uint8List combined;
 
-      // Check if it's potentially a v2 message (at least 16 bytes for IV + data)
-      if (combined.length >= 17) {
-        final iv = enc.IV(Uint8List.fromList(combined.sublist(0, 16)));
-        final cipher = enc.Encrypted(Uint8List.fromList(combined.sublist(16)));
-        return _encrypter.decrypt(cipher, iv: iv);
-      }
-    } catch (_) {
-      // If combined decoding fails, treat as potential legacy v1 string
+    try {
+      // 🛠️ FIX: Decode base64 exactly once. If it fails here, it's corrupted
+      // data over Bluetooth, and we shouldn't attempt legacy decryption at all.
+      combined = base64.decode(payload);
+    } catch (e) {
+      throw const EncryptionException(
+          'Decryption Failed: Invalid Base64 payload.');
     }
 
-    return _decryptLegacy(payload);
+    // 🛠️ PERF/FIX: AES-CBC ciphertexts are always multiples of 16.
+    // V2 is 16 (IV) + multiple of 16 = min 32 bytes and % 16 == 0.
+    // This strict check avoids throwing/catching expensive PaddingExceptions
+    // when processing short legacy payloads.
+    if (combined.length >= 32 && combined.length % 16 == 0) {
+      try {
+        // 🛠️ PERF: Use `Uint8List.sublistView` instead of `.sublist`.
+        // `.sublist` creates brand new memory copies. `sublistView` creates a
+        // zero-copy pointer window into existing memory, saving CPU/GC overhead.
+        final iv = enc.IV(Uint8List.sublistView(combined, 0, 16));
+        final cipher = enc.Encrypted(Uint8List.sublistView(combined, 16));
+        return _encrypter.decrypt(cipher, iv: iv);
+      } catch (_) {
+        // Fall through to legacy if V2 decryption fails (wrong padding/key)
+      }
+    }
+
+    return _decryptLegacyBytes(combined);
   }
 
   /// v1 static-IV fallback for older versions of the app.
-  String _decryptLegacy(String ciphertext) {
+  String _decryptLegacyBytes(Uint8List cipherBytes) {
     try {
-      // Legacy used MD5 of passphrase as the static IV
-      final ivBytes = md5.convert(utf8.encode(_passphrase)).bytes;
-      final iv = enc.IV(Uint8List.fromList(ivBytes));
-      final encrypted = enc.Encrypted.fromBase64(ciphertext);
-      return _encrypter.decrypt(encrypted, iv: iv);
+      // 🛠️ PERF: Use pre-decoded bytes and cached IV.
+      // Previously this called `Encrypted.fromBase64` which re-ran the Base64 decoder.
+      final encrypted = enc.Encrypted(cipherBytes);
+      return _encrypter.decrypt(encrypted, iv: _legacyIv);
     } catch (e) {
       throw const EncryptionException(
           'Decryption Failed: Data corruption or invalid key.');
@@ -84,15 +99,13 @@ class EncryptionService {
 
   /// Generates a cryptographically secure random 24-character passphrase.
   static String generatePassphrase() {
-    final bytes = enc.SecureRandom(18).bytes; // 18 bytes -> 24 base64 chars
+    final bytes = enc.SecureRandom(18).bytes;
     return base64Url.encode(bytes).replaceAll('=', '');
   }
 
   /// Creates a visual 8-digit fingerprint for manual key verification.
   static String hashPreview(String passphrase) {
-    if (passphrase.isEmpty) {
-      return '00000000';
-    }
+    if (passphrase.isEmpty) return '00000000';
     return sha256
         .convert(utf8.encode(passphrase))
         .toString()
@@ -104,8 +117,6 @@ class EncryptionService {
 /// Specialized exception for encryption errors.
 class EncryptionException implements Exception {
   final String message;
-
-  // FIXED: Constructor is now const to resolve analyzer info
   const EncryptionException(this.message);
 
   @override

@@ -1,7 +1,12 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart'; // 🟢 NEW: Image Picker
 import 'package:provider/provider.dart';
+
 import '../services/bluetooth_service.dart';
+import '../services/wifi_service.dart'; // 🟢 NEW: Wifi Service
 import '../models/message_model.dart';
 import '../theme/app_theme.dart';
 import '../widgets/glow_container.dart';
@@ -24,7 +29,6 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
-    // Initialize view at the bottom
     _scrollToBottom(animated: false);
   }
 
@@ -36,7 +40,6 @@ class _ChatScreenState extends State<ChatScreen> {
     super.dispose();
   }
 
-  /// Handles smooth scrolling to the bottom of the message list
   void _scrollToBottom({bool animated = true}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollCtrl.hasClients) {
@@ -55,19 +58,26 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Standard Tablet/Desktop breakpoint
-    final bool isWide = MediaQuery.of(context).size.width >= 720;
+    final bool isWide = MediaQuery.sizeOf(context).width >= 720;
 
-    return Consumer<BluetoothService>(
-      builder: (context, service, _) {
-        // 1. Auto-scroll logic: Trigger whenever the message list updates
-        if (service.messages.length != _lastMsgCount) {
-          _lastMsgCount = service.messages.length;
+    // 🟢 NEW: Listen to BOTH Bluetooth and Wi-Fi services
+    return Consumer2<BluetoothService, WifiService>(
+      builder: (context, btService, wifiService, _) {
+        // Merge messages from both services and sort by time
+        final List<Message> allMessages = [
+          ...btService.messages,
+          ...wifiService.messages
+        ]..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+
+        final bool isConnected =
+            btService.isConnected || wifiService.isConnected;
+
+        if (allMessages.length != _lastMsgCount) {
+          _lastMsgCount = allMessages.length;
           _scrollToBottom();
         }
 
-        // 2. Lifecycle logic: On mobile, pop back to home if connection is lost
-        if (!service.isConnected && !isWide) {
+        if (!isConnected && !isWide) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted && Navigator.canPop(context)) {
               Navigator.pop(context);
@@ -78,16 +88,17 @@ class _ChatScreenState extends State<ChatScreen> {
         return Scaffold(
           backgroundColor: AppTheme.bgDeep,
           resizeToAvoidBottomInset: true,
-          appBar: _buildAppBar(context, service, isWide),
+          appBar: _buildAppBar(
+              context, btService, wifiService, isConnected, isWide),
           body: Column(
             children: [
-              _buildSecurityStatusHeader(),
+              _buildSecurityStatusHeader(wifiService.isConnected),
               Expanded(
-                child: service.messages.isEmpty
+                child: allMessages.isEmpty
                     ? _buildEmptyState()
-                    : _buildMessageList(service.messages),
+                    : _buildMessageList(allMessages),
               ),
-              _buildInputArea(service),
+              _buildInputArea(btService, wifiService, isConnected),
             ],
           ),
         );
@@ -97,13 +108,16 @@ class _ChatScreenState extends State<ChatScreen> {
 
   // ── AppBar ──────────────────────────────────────────────────────────────
 
-  PreferredSizeWidget _buildAppBar(
-      BuildContext context, BluetoothService service, bool isWide) {
+  PreferredSizeWidget _buildAppBar(BuildContext context, BluetoothService bt,
+      WifiService wifi, bool isConnected, bool isWide) {
+    final title = wifi.isConnected
+        ? 'WLAN: ${wifi.localIP ?? 'Connected'}'
+        : bt.connectedDeviceName ?? 'Secure Session';
+
     return AppBar(
       backgroundColor: AppTheme.bgDeep,
       elevation: 0,
       centerTitle: false,
-      // On wide screens (tablets), hide the back button as the chat is a side-panel
       leading: isWide
           ? null
           : IconButton(
@@ -115,7 +129,7 @@ class _ChatScreenState extends State<ChatScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            service.connectedDeviceName ?? 'Secure Session',
+            title,
             style: const TextStyle(
                 fontSize: 15,
                 fontWeight: FontWeight.bold,
@@ -128,18 +142,17 @@ class _ChatScreenState extends State<ChatScreen> {
                 height: 6,
                 decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: service.isConnected
-                        ? AppTheme.accentGreen
-                        : AppTheme.danger),
+                    color:
+                        isConnected ? AppTheme.accentGreen : AppTheme.danger),
               ),
               const SizedBox(width: 6),
               Text(
-                service.isConnected ? 'ENCRYPTED' : 'DISCONNECTED',
+                isConnected
+                    ? (wifi.isConnected ? 'WLAN ENCRYPTED' : 'BT ENCRYPTED')
+                    : 'DISCONNECTED',
                 style: TextStyle(
                     fontSize: 9,
-                    color: service.isConnected
-                        ? AppTheme.accentGreen
-                        : AppTheme.danger,
+                    color: isConnected ? AppTheme.accentGreen : AppTheme.danger,
                     fontWeight: FontWeight.bold,
                     letterSpacing: 1.2),
               ),
@@ -159,7 +172,7 @@ class _ChatScreenState extends State<ChatScreen> {
           onPressed: () => setState(() => _showEncrypted = !_showEncrypted),
           tooltip: 'Toggle Ciphertext View',
         ),
-        _buildPopupMenu(service),
+        _buildPopupMenu(bt, wifi),
       ],
       bottom: PreferredSize(
         preferredSize: const Size.fromHeight(1),
@@ -168,16 +181,18 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Widget _buildPopupMenu(BluetoothService service) {
+  Widget _buildPopupMenu(BluetoothService bt, WifiService wifi) {
     return PopupMenuButton<String>(
       icon: const Icon(Icons.more_vert, color: AppTheme.textSecondary),
       color: AppTheme.bgCard,
       onSelected: (val) {
         if (val == 'clear') {
-          service.clearMessages();
+          bt.clearMessages();
+          wifi.clearMessages();
         }
         if (val == 'disconnect') {
-          service.disconnect();
+          bt.disconnect();
+          wifi.disconnect();
         }
       },
       itemBuilder: (context) => [
@@ -205,17 +220,18 @@ class _ChatScreenState extends State<ChatScreen> {
 
   // ── Body Components ──────────────────────────────────────────────────────
 
-  Widget _buildSecurityStatusHeader() {
+  Widget _buildSecurityStatusHeader(bool isWifi) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
       color: AppTheme.bgSurface,
-      child: const Row(
+      child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.verified_user, color: AppTheme.accentGreen, size: 12),
-          SizedBox(width: 8),
-          Text(
+          Icon(isWifi ? Icons.wifi_tethering : Icons.verified_user,
+              color: AppTheme.accentGreen, size: 12),
+          const SizedBox(width: 8),
+          const Text(
             'AES-256-CBC · SECURE CHANNEL ACTIVE',
             style: TextStyle(
                 color: AppTheme.textDim,
@@ -234,7 +250,7 @@ class _ChatScreenState extends State<ChatScreen> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(Icons.lock_person_outlined,
-              size: 64, color: AppTheme.accentCyan.withOpacity(0.05)),
+              size: 64, color: AppTheme.accentCyan.withValues(alpha: 0.05)),
           const SizedBox(height: 16),
           const Text(
             'Encryption synchronized.\nMessages are end-to-end encrypted.',
@@ -253,35 +269,41 @@ class _ChatScreenState extends State<ChatScreen> {
       padding: const EdgeInsets.all(16),
       itemCount: messages.length,
       itemBuilder: (context, index) {
-        final msg = messages[index];
-        return _MessageBubble(message: msg, showCipher: _showEncrypted);
+        return _MessageBubble(
+            message: messages[index], showCipher: _showEncrypted);
       },
     );
   }
 
-  Widget _buildInputArea(BluetoothService service) {
-    final bool canChat = service.isConnected;
-
+  Widget _buildInputArea(
+      BluetoothService bt, WifiService wifi, bool isConnected) {
     return Container(
       padding: EdgeInsets.fromLTRB(
-          16, 8, 16, MediaQuery.of(context).padding.bottom + 12),
-      decoration: BoxDecoration(
+          12, 8, 12, MediaQuery.paddingOf(context).bottom + 12),
+      decoration: const BoxDecoration(
         color: AppTheme.bgSurface,
-        border: const Border(top: BorderSide(color: AppTheme.borderGlow)),
+        border: Border(top: BorderSide(color: AppTheme.borderGlow)),
       ),
       child: Row(
         children: [
+          // 🟢 NEW: Image Attachment Button
+          IconButton(
+            icon: Icon(Icons.add_photo_alternate,
+                color: isConnected ? AppTheme.accentCyan : AppTheme.textDim),
+            onPressed: isConnected ? () => _pickAndSendImage(wifi) : null,
+          ),
+
           Expanded(
             child: TextField(
               controller: _controller,
               focusNode: _focusNode,
-              enabled: canChat,
+              enabled: isConnected,
               textInputAction: TextInputAction.send,
-              onSubmitted: (_) => _sendMessage(service),
+              onSubmitted: (_) => _sendMessage(bt, wifi),
               style: const TextStyle(color: AppTheme.textPrimary, fontSize: 14),
               decoration: InputDecoration(
                 hintText:
-                    canChat ? 'Type secure message...' : 'Radio Link Lost',
+                    isConnected ? 'Type secure message...' : 'Radio Link Lost',
                 hintStyle: const TextStyle(color: AppTheme.textDim),
                 fillColor: AppTheme.bgDeep,
                 filled: true,
@@ -294,15 +316,14 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 8),
           GlowContainer(
             child: IconButton.filled(
-              onPressed: canChat ? () => _sendMessage(service) : null,
+              onPressed: isConnected ? () => _sendMessage(bt, wifi) : null,
               icon: const Icon(Icons.send_rounded, size: 20),
-              // Fixed Material 3 styling
               style: IconButton.styleFrom(
                 backgroundColor:
-                    canChat ? AppTheme.accentCyan : AppTheme.textDim,
+                    isConnected ? AppTheme.accentCyan : AppTheme.textDim,
                 foregroundColor: AppTheme.bgDeep,
               ),
             ),
@@ -312,15 +333,43 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  void _sendMessage(BluetoothService service) {
-    final text = _controller.text.trim();
-    if (text.isEmpty) {
+  // 🟢 NEW: Handles picking and sending images
+  Future<void> _pickAndSendImage(WifiService wifi) async {
+    if (!wifi.isConnected) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('High-res images require WLAN/Hotspot connection.')),
+      );
       return;
     }
-    service.sendMessage(text);
+
+    final picker = ImagePicker();
+    final xfile = await picker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 40, // Compress to save bandwidth
+    );
+
+    if (xfile != null) {
+      final bytes = await xfile.readAsBytes();
+      wifi.sendImage(bytes);
+    }
+  }
+
+  void _sendMessage(BluetoothService bt, WifiService wifi) {
+    final text = _controller.text.trim();
+    if (text.isEmpty) return;
+
+    // Send via Wi-Fi if connected, fallback to Bluetooth
+    if (wifi.isConnected) {
+      wifi.sendMessage(text);
+    } else if (bt.isConnected) {
+      bt.sendMessage(text);
+    }
+
     _controller.clear();
-    // Retain focus for quick replying
-    _focusNode.requestFocus();
+    Future.microtask(() {
+      if (mounted) _focusNode.requestFocus();
+    });
   }
 }
 
@@ -342,6 +391,7 @@ class _MessageBubble extends StatelessWidget {
         children: [
           GestureDetector(
             onLongPress: () {
+              if (message.isImage) return; // Don't copy huge base64 strings
               Clipboard.setData(ClipboardData(text: message.text));
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
@@ -352,11 +402,12 @@ class _MessageBubble extends StatelessWidget {
             child: Container(
               margin: const EdgeInsets.only(bottom: 4, top: 8),
               constraints: BoxConstraints(
-                  maxWidth: MediaQuery.of(context).size.width * 0.75),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  maxWidth: MediaQuery.sizeOf(context).width * 0.75),
+              padding: EdgeInsets.all(
+                  message.isImage ? 4 : 14), // Smaller padding for images
               decoration: BoxDecoration(
                 color: isMe
-                    ? AppTheme.accentCyan.withOpacity(0.12)
+                    ? AppTheme.accentCyan.withValues(alpha: 0.12)
                     : AppTheme.bgCard,
                 borderRadius: BorderRadius.circular(16).copyWith(
                   bottomRight: isMe ? const Radius.circular(2) : null,
@@ -364,14 +415,14 @@ class _MessageBubble extends StatelessWidget {
                 ),
                 border: Border.all(
                     color: isMe
-                        ? AppTheme.accentCyan.withOpacity(0.3)
+                        ? AppTheme.accentCyan.withValues(alpha: 0.3)
                         : AppTheme.borderGlow),
               ),
               child: Column(
                 crossAxisAlignment:
                     isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
                 children: [
-                  // Decryption Error Logic
+                  // ── DECRYPTION ERROR ──
                   if (message.isDecryptionError)
                     const Row(
                       mainAxisSize: MainAxisSize.min,
@@ -383,20 +434,43 @@ class _MessageBubble extends StatelessWidget {
                             style: TextStyle(
                                 color: AppTheme.warning,
                                 fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                                fontStyle: FontStyle.italic)),
+                                fontWeight: FontWeight.bold)),
                       ],
                     )
-                  else
-                    Text(
-                      message.text,
-                      style: const TextStyle(
-                          color: AppTheme.textPrimary,
-                          fontSize: 14,
-                          height: 1.4),
-                    ),
 
-                  // Toggleable Ciphertext View
+                  // ── 🟢 NEW: IMAGE RENDERER ──
+                  else if (message.isImage)
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(14),
+                      child: Image.memory(
+                        base64Decode(message.text),
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stackTrace) => Container(
+                          padding: const EdgeInsets.all(20),
+                          color: AppTheme.bgDeep,
+                          child: const Column(
+                            children: [
+                              Icon(Icons.broken_image,
+                                  color: AppTheme.warning, size: 40),
+                              SizedBox(height: 8),
+                              Text('Corrupted Image Data',
+                                  style: TextStyle(
+                                      color: AppTheme.warning, fontSize: 10)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    )
+
+                  // ── STANDARD TEXT ──
+                  else
+                    Text(message.text,
+                        style: const TextStyle(
+                            color: AppTheme.textPrimary,
+                            fontSize: 14,
+                            height: 1.4)),
+
+                  // ── CIPHERTEXT VIEW ──
                   if (showCipher) ...[
                     const SizedBox(height: 10),
                     Container(
@@ -406,7 +480,7 @@ class _MessageBubble extends StatelessWidget {
                           color: Colors.black54,
                           borderRadius: BorderRadius.circular(8),
                           border: Border.all(
-                              color: AppTheme.warning.withOpacity(0.2))),
+                              color: AppTheme.warning.withValues(alpha: 0.2))),
                       child: Text(
                         message.encryptedText,
                         style: const TextStyle(
@@ -430,10 +504,9 @@ class _MessageBubble extends StatelessWidget {
                 if (isMe)
                   const Icon(Icons.lock, size: 8, color: AppTheme.textDim),
                 if (isMe) const SizedBox(width: 4),
-                Text(
-                  message.timeString,
-                  style: const TextStyle(color: AppTheme.textDim, fontSize: 9),
-                ),
+                Text(message.timeString,
+                    style:
+                        const TextStyle(color: AppTheme.textDim, fontSize: 9)),
                 if (!isMe) const SizedBox(width: 4),
                 if (!isMe)
                   const Icon(Icons.lock, size: 8, color: AppTheme.textDim),

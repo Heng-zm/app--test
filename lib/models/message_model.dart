@@ -8,7 +8,7 @@ class Message extends HiveObject {
   final String id;
 
   @HiveField(1)
-  final String text;
+  final String text; // For images, this stores the decrypted Base64 string
 
   @HiveField(2)
   final String encryptedText;
@@ -22,6 +22,9 @@ class Message extends HiveObject {
   @HiveField(5)
   final bool isDecryptionError;
 
+  @HiveField(6) // 🟢 NEW: Added Hive field for Image tracking
+  final bool isImage;
+
   Message({
     required this.id,
     required this.text,
@@ -29,6 +32,7 @@ class Message extends HiveObject {
     required this.isMine,
     required this.timestamp,
     this.isDecryptionError = false,
+    this.isImage = false, // 🟢 Defaults to false
   });
 
   /// Returns true if the message was successfully decrypted and is readable.
@@ -75,6 +79,7 @@ class Message extends HiveObject {
     bool? isMine,
     DateTime? timestamp,
     bool? isDecryptionError,
+    bool? isImage, // 🟢 Added to copyWith
   }) {
     return Message(
       id: id ?? this.id,
@@ -83,6 +88,7 @@ class Message extends HiveObject {
       isMine: isMine ?? this.isMine,
       timestamp: timestamp ?? this.timestamp,
       isDecryptionError: isDecryptionError ?? this.isDecryptionError,
+      isImage: isImage ?? this.isImage, // 🟢 Added to copyWith
     );
   }
 }

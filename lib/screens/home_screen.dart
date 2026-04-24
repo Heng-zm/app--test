@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:provider/provider.dart';
 import '../platform/app_platform.dart';
 import '../platform/permission_helper.dart';
@@ -9,6 +10,7 @@ import '../widgets/bt_signal_bars.dart';
 import '../widgets/glow_container.dart';
 import '../widgets/scan_animation.dart';
 import '../widgets/platform_badge.dart';
+import '../widgets/wifi_connection_dialog.dart'; // 🟢 NEW: Imported the Wi-Fi Dialog
 import 'chat_screen.dart';
 import 'settings_screen.dart';
 
@@ -21,6 +23,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   bool _initialized = false;
   bool _permissionDenied = false;
+  String? _bootError;
 
   @override
   void initState() {
@@ -29,29 +32,47 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _boot() async {
-    if (AppPlatform.needsRuntimePermissions) {
-      final bool granted = await PermissionHelper.requestAllPermissions();
-      if (!granted && mounted) {
-        setState(() {
-          _permissionDenied = true;
-          _initialized = true;
-        });
+    try {
+      // Web: skip all BT/permission init entirely
+      if (AppPlatform.isWeb) {
+        if (mounted) setState(() => _initialized = true);
         return;
       }
-    }
 
-    if (!mounted) {
-      return;
-    }
+      // Step 1: Permissions (mobile only)
+      if (AppPlatform.needsRuntimePermissions) {
+        bool granted = false;
+        try {
+          granted = await PermissionHelper.requestAllPermissions();
+        } catch (e) {
+          debugPrint('[Boot] Permission request failed: $e');
+          granted = false;
+        }
 
-    setState(() {
-      _permissionDenied = false;
-    });
+        if (!granted && mounted) {
+          setState(() {
+            _permissionDenied = true;
+            _initialized = true;
+          });
+          return;
+        }
+      }
 
-    await context.read<BluetoothService>().initialize();
+      if (!mounted) return;
+      setState(() => _permissionDenied = false);
 
-    if (mounted) {
-      setState(() => _initialized = true);
+      // Step 2: Bluetooth init
+      try {
+        await context.read<BluetoothService>().initialize();
+      } catch (e) {
+        debugPrint('[Boot] BluetoothService.initialize failed: $e');
+      }
+    } catch (e) {
+      debugPrint('[Boot] Unexpected error: $e');
+      if (mounted) setState(() => _bootError = e.toString());
+    } finally {
+      // ALWAYS unblock the UI
+      if (mounted) setState(() => _initialized = true);
     }
   }
 
@@ -61,44 +82,38 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Scaffold(
       backgroundColor: AppTheme.bgDeep,
-      appBar: _buildAppBar(context),
+      appBar: _initialized && !_permissionDenied && _bootError == null
+          ? _buildAppBar(context)
+          : null,
       body: !_initialized
           ? _buildLoading()
-          : _permissionDenied
-              ? _buildPermissionDenied()
-              : isWide
-                  ? _buildWideLayout(context)
-                  : _buildNarrowLayout(context),
+          : _bootError != null
+              ? _buildErrorScreen(_bootError!)
+              : _permissionDenied
+                  ? _buildPermissionDenied()
+                  : isWide
+                      ? _buildWideLayout(context)
+                      : _buildNarrowLayout(context),
     );
   }
+
+  // ── AppBar ───────────────────────────────────────────────
 
   PreferredSizeWidget _buildAppBar(BuildContext context) {
     return AppBar(
       backgroundColor: AppTheme.bgDeep,
       elevation: 0,
+      titleSpacing: 16,
       title: Row(
         children: [
-          Container(
-            width: 8,
-            height: 8,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: AppTheme.accentCyan,
-              boxShadow: [
-                BoxShadow(
-                  color: AppTheme.accentCyan.withValues(alpha: 0.7),
-                  blurRadius: 8,
-                  spreadRadius: 2,
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
+          // Animated pulse dot
+          _PulseDot(),
+          const SizedBox(width: 10),
           const Text(
             'BT TERMINAL',
             style: TextStyle(
-              letterSpacing: 1.5,
-              fontSize: 16,
+              letterSpacing: 2,
+              fontSize: 15,
               fontWeight: FontWeight.bold,
             ),
           ),
@@ -107,13 +122,22 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
       actions: [
+        // 🟢 NEW: Wi-Fi Fallback Button
         IconButton(
-          icon: const Icon(Icons.security, color: AppTheme.accentCyan),
+          icon: const Icon(Icons.wifi, color: AppTheme.accentCyan, size: 22),
+          tooltip: 'WLAN Fallback',
+          onPressed: () => WifiConnectionDialog.show(context),
+        ),
+        IconButton(
+          icon: const Icon(Icons.security_outlined,
+              color: AppTheme.accentCyan, size: 22),
+          tooltip: 'Security Settings',
           onPressed: () => Navigator.push(
             context,
             MaterialPageRoute(builder: (_) => const SettingsScreen()),
           ),
         ),
+        const SizedBox(width: 4),
       ],
       bottom: PreferredSize(
         preferredSize: const Size.fromHeight(1),
@@ -123,7 +147,7 @@ class _HomeScreenState extends State<HomeScreen> {
             gradient: LinearGradient(
               colors: [
                 Colors.transparent,
-                AppTheme.accentCyan.withValues(alpha: 0.3),
+                AppTheme.accentCyan.withValues(alpha: 0.4),
                 Colors.transparent,
               ],
             ),
@@ -132,6 +156,8 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
+
+  // ── Layouts ──────────────────────────────────────────────
 
   Widget _buildNarrowLayout(BuildContext context) {
     return Consumer<BluetoothService>(
@@ -175,13 +201,23 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           Icon(
             Icons.bluetooth_searching,
-            color: AppTheme.accentCyan.withValues(alpha: 0.05),
-            size: 160,
+            color: AppTheme.accentCyan.withValues(alpha: 0.06),
+            size: 120,
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 20),
           const Text(
-            'Establish Uplink to Start Chat',
-            style: TextStyle(color: AppTheme.textDim, fontSize: 13),
+            'AWAITING UPLINK',
+            style: TextStyle(
+              color: AppTheme.textDim,
+              fontSize: 11,
+              letterSpacing: 3,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Connect a device to begin secure session',
+            style: TextStyle(color: AppTheme.textDim, fontSize: 11),
           ),
         ],
       ),
@@ -190,133 +226,364 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildScrollContent(BuildContext context, BluetoothService service) {
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
       children: [
+        if (AppPlatform.isWeb) ...[
+          _buildWebBanner(),
+          const SizedBox(height: 12),
+        ],
         _buildScanButton(service),
-        // FIX: Removed braces from collection-if
-        if (service.errorMessage != null) _buildErrorBanner(service),
-        if (service.pairedDevices.isNotEmpty) ...[
-          const SizedBox(height: 24),
-          const Text(
-            'BONDED NODES',
-            style: TextStyle(
-              color: AppTheme.textSecondary,
-              fontSize: 10,
-              fontWeight: FontWeight.bold,
-              letterSpacing: 2,
-            ),
-          ),
+        if (service.errorMessage != null) ...[
           const SizedBox(height: 8),
+          _buildErrorBanner(service),
+        ],
+        if (service.pairedDevices.isNotEmpty) ...[
+          const SizedBox(height: 28),
+          _buildSectionHeader('BONDED NODES', Icons.link, AppTheme.accentGreen),
+          const SizedBox(height: 10),
           ...service.pairedDevices
-              .map((d) => _buildDeviceTile(context, d, service)),
+              .asMap()
+              .entries
+              .map((e) => _buildDeviceTile(context, e.value, service, e.key)),
         ],
         if (service.discovered.isNotEmpty) ...[
-          const SizedBox(height: 24),
-          const Text(
-            'NEARBY NODES',
-            style: TextStyle(
-              color: AppTheme.textSecondary,
-              fontSize: 10,
-              fontWeight: FontWeight.bold,
-              letterSpacing: 2,
-            ),
-          ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 28),
+          _buildSectionHeader(
+              'NEARBY NODES', Icons.wifi_tethering, AppTheme.accentCyan),
+          const SizedBox(height: 10),
           ...service.discovered
-              .map((d) => _buildDeviceTile(context, d, service)),
+              .asMap()
+              .entries
+              .map((e) => _buildDeviceTile(context, e.value, service, e.key)),
+        ],
+        if (!AppPlatform.isWeb &&
+            service.pairedDevices.isEmpty &&
+            service.discovered.isEmpty &&
+            !service.isDiscovering) ...[
+          const SizedBox(height: 40),
+          _buildEmptyHint(),
         ],
       ],
     );
   }
 
-  Widget _buildStatusBar(BluetoothService service) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      decoration:
-          BoxDecoration(color: AppTheme.bgSurface.withValues(alpha: 0.5)),
-      child: Row(
-        children: [
-          const Icon(Icons.radio_button_checked,
-              color: AppTheme.accentGreen, size: 12),
-          const SizedBox(width: 8),
-          Text(
-            service.state.name.toUpperCase(),
-            style: const TextStyle(
-              color: AppTheme.accentGreen,
-              fontSize: 10,
-              fontWeight: FontWeight.bold,
+  Widget _buildSectionHeader(String label, IconData icon, Color color) {
+    return Row(
+      children: [
+        Icon(icon, color: color, size: 12),
+        const SizedBox(width: 8),
+        Text(
+          label,
+          style: TextStyle(
+            color: color.withValues(alpha: 0.8),
+            fontSize: 10,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 2.5,
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Container(
+            height: 1,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [color.withValues(alpha: 0.3), Colors.transparent],
+              ),
             ),
           ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStatusBar(BluetoothService service) {
+    final bool isWeb = AppPlatform.isWeb;
+    final String label = isWeb
+        ? 'WEB — BLUETOOTH UNAVAILABLE'
+        : service.state.name.toUpperCase();
+    final Color color = isWeb
+        ? AppTheme.warning
+        : service.state == BtConnectionState.connected
+            ? AppTheme.accentGreen
+            : service.state == BtConnectionState.error
+                ? AppTheme.danger
+                : service.state == BtConnectionState.scanning
+                    ? AppTheme.accentCyan
+                    : AppTheme.textSecondary;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+      decoration: BoxDecoration(
+        color: AppTheme.bgSurface.withValues(alpha: 0.6),
+        border: Border(
+          bottom: BorderSide(color: color.withValues(alpha: 0.15)),
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 6,
+            height: 6,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: color,
+              boxShadow: [
+                BoxShadow(color: color.withValues(alpha: 0.5), blurRadius: 4),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            label,
+            style: TextStyle(
+              color: color,
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 1.5,
+            ),
+          ),
+          if (service.isConnected && service.connectedDeviceName != null) ...[
+            const Spacer(),
+            Text(
+              service.connectedDeviceName!,
+              style: const TextStyle(
+                color: AppTheme.accentGreen,
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(width: 6),
+            const Icon(Icons.lock, size: 10, color: AppTheme.accentGreen),
+          ],
         ],
       ),
     );
   }
 
   Widget _buildScanButton(BluetoothService service) {
+    final bool disabled = AppPlatform.isWeb;
+    final bool scanning = service.isDiscovering;
+
     return GlowContainer(
-      child: InkWell(
-        onTap: service.isDiscovering
-            ? service.stopDiscovery
-            : service.startDiscovery,
-        child: Container(
-          padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: service.isDiscovering
-                  ? AppTheme.accentCyan.withValues(alpha: 0.5)
-                  : AppTheme.borderGlow,
-            ),
-          ),
-          child: Row(
-            children: [
-              service.isDiscovering
-                  ? const RepaintBoundary(child: ScanAnimation(size: 48))
-                  : const Icon(Icons.search, color: AppTheme.accentCyan),
-              const SizedBox(width: 16),
-              const Text(
-                'POLL FREQUENCIES',
-                style: TextStyle(
-                  color: AppTheme.accentCyan,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 1,
-                ),
+      glowColor: disabled ? Colors.transparent : AppTheme.accentCyan,
+      blurRadius: scanning ? 20 : 10,
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: disabled
+              ? null
+              : scanning
+                  ? service.stopDiscovery
+                  : service.startDiscovery,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              color: AppTheme.bgSurface.withValues(alpha: 0.5),
+              border: Border.all(
+                color: disabled
+                    ? AppTheme.borderGlow.withValues(alpha: 0.3)
+                    : scanning
+                        ? AppTheme.accentCyan.withValues(alpha: 0.6)
+                        : AppTheme.borderGlow,
+                width: scanning ? 1.5 : 1,
               ),
-            ],
+            ),
+            child: Row(
+              children: [
+                if (scanning)
+                  const RepaintBoundary(child: ScanAnimation(size: 40))
+                else
+                  Icon(
+                    disabled ? Icons.bluetooth_disabled : Icons.radar,
+                    color: disabled ? AppTheme.textDim : AppTheme.accentCyan,
+                    size: 26,
+                  ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        disabled
+                            ? 'BLUETOOTH UNAVAILABLE'
+                            : scanning
+                                ? 'SCANNING...'
+                                : 'SCAN FOR DEVICES',
+                        style: TextStyle(
+                          color:
+                              disabled ? AppTheme.textDim : AppTheme.accentCyan,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 1.5,
+                          fontSize: 13,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        disabled
+                            ? 'Use Android or iOS app'
+                            : scanning
+                                ? 'Tap to stop'
+                                : 'Classic BT + BLE',
+                        style: const TextStyle(
+                          color: AppTheme.textDim,
+                          fontSize: 10,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (!disabled)
+                  Icon(
+                    scanning ? Icons.stop_circle_outlined : Icons.chevron_right,
+                    color: scanning ? AppTheme.danger : AppTheme.textDim,
+                    size: 20,
+                  ),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 
-  Widget _buildDeviceTile(
-      BuildContext context, BTDevice device, BluetoothService service) {
-    return ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-      title: Text(
-        device.name,
-        style: const TextStyle(color: Colors.white, fontSize: 14),
-      ),
-      subtitle: Row(
-        children: [
-          Text(
-            device.displayAddress,
-            style: const TextStyle(color: Colors.grey, fontSize: 10),
+  Widget _buildDeviceTile(BuildContext context, BTDevice device,
+      BluetoothService service, int index) {
+    final bool isConnecting = service.state == BtConnectionState.connecting;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: isConnecting ? null : () => _connect(context, device, service),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              color: AppTheme.bgCard,
+              border: Border.all(color: AppTheme.borderGlow),
+            ),
+            child: Row(
+              children: [
+                // Device type icon
+                Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: (device.isBLE
+                            ? AppTheme.accentCyan
+                            : AppTheme.accentGreen)
+                        .withValues(alpha: 0.1),
+                    border: Border.all(
+                      color: (device.isBLE
+                              ? AppTheme.accentCyan
+                              : AppTheme.accentGreen)
+                          .withValues(alpha: 0.3),
+                    ),
+                  ),
+                  child: Icon(
+                    device.isBLE ? Icons.bluetooth : Icons.bluetooth_connected,
+                    size: 18,
+                    color: device.isBLE
+                        ? AppTheme.accentCyan
+                        : AppTheme.accentGreen,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                // Device info
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        device.name,
+                        style: const TextStyle(
+                          color: AppTheme.textPrimary,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 3),
+                      Row(
+                        children: [
+                          Text(
+                            device.displayAddress,
+                            style: const TextStyle(
+                              color: AppTheme.textDim,
+                              fontSize: 10,
+                              fontFamily: 'monospace',
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 5, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: (device.isBLE
+                                      ? AppTheme.accentCyan
+                                      : AppTheme.accentGreen)
+                                  .withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(3),
+                            ),
+                            child: Text(
+                              device.isBLE ? 'BLE' : 'SPP',
+                              style: TextStyle(
+                                color: device.isBLE
+                                    ? AppTheme.accentCyan
+                                    : AppTheme.accentGreen,
+                                fontSize: 8,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          if (device.rssi != null) ...[
+                            const SizedBox(width: 8),
+                            BTSignalBars(bars: device.signalBars),
+                          ],
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                // Connect button
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: AppTheme.accentCyan.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                        color: AppTheme.accentCyan.withValues(alpha: 0.3)),
+                  ),
+                  child: Text(
+                    isConnecting ? '...' : 'LINK',
+                    style: const TextStyle(
+                      color: AppTheme.accentCyan,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
-          const SizedBox(width: 8),
-          // FIX: Removed braces from collection-if
-          if (device.rssi != null) BTSignalBars(bars: device.signalBars),
-        ],
-      ),
-      trailing: ElevatedButton(
-        onPressed: () => _connect(context, device, service),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: AppTheme.bgSurface,
-          foregroundColor: AppTheme.accentCyan,
         ),
-        child: const Text('CONNECT', style: TextStyle(fontSize: 10)),
       ),
-    );
+    ).animate().fadeIn(duration: 200.ms, delay: (index * 50).ms).slideY(
+          begin: 0.1,
+          end: 0,
+          duration: 200.ms,
+          delay: (index * 50).ms,
+        );
   }
 
   Future<void> _connect(
@@ -327,36 +594,255 @@ class _HomeScreenState extends State<HomeScreen> {
     await service.stopDiscovery();
     await service.connectToDevice(device);
 
-    if (!mounted) {
-      return;
-    }
+    if (!mounted) return;
 
     if (service.isConnected && !isWide) {
       navigator.push(MaterialPageRoute(builder: (_) => const ChatScreen()));
     }
   }
 
-  Widget _buildErrorBanner(BluetoothService service) => Padding(
-        padding: const EdgeInsets.only(top: 8.0),
-        child: Text(
-          service.errorMessage ?? 'Unknown Error',
-          style: const TextStyle(color: Colors.red, fontSize: 12),
+  // ── State / Info Widgets ─────────────────────────────────
+
+  Widget _buildWebBanner() {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppTheme.warning.withValues(alpha: 0.07),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.warning.withValues(alpha: 0.3)),
+      ),
+      child: const Row(
+        children: [
+          Icon(Icons.info_outline, color: AppTheme.warning, size: 16),
+          SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              'Bluetooth is not supported on Web. '
+              'Use the Android or iOS app for full functionality.',
+              style:
+                  TextStyle(color: AppTheme.warning, fontSize: 11, height: 1.5),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyHint() {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.sensors,
+              size: 48, color: AppTheme.textDim.withValues(alpha: 0.3)),
+          const SizedBox(height: 12),
+          const Text(
+            'No devices found',
+            style: TextStyle(color: AppTheme.textDim, fontSize: 12),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Tap SCAN to search for nearby devices',
+            style: TextStyle(color: AppTheme.textDim, fontSize: 10),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLoading() => const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            RepaintBoundary(child: ScanAnimation(size: 90)),
+            SizedBox(height: 20),
+            Text(
+              'INITIALIZING',
+              style: TextStyle(
+                color: AppTheme.textDim,
+                fontSize: 10,
+                letterSpacing: 3,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
         ),
       );
 
-  Widget _buildLoading() => const Scaffold(
-      body: Center(child: RepaintBoundary(child: ScanAnimation(size: 100))));
-
-  Widget _buildPermissionDenied() => const Scaffold(
-        body: Center(
-          child: Padding(
-            padding: EdgeInsets.all(32.0),
-            child: Text(
-              'Security Access Denied. Please enable permissions in settings.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white),
-            ),
+  Widget _buildPermissionDenied() => Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: AppTheme.danger.withValues(alpha: 0.1),
+                  border:
+                      Border.all(color: AppTheme.danger.withValues(alpha: 0.3)),
+                ),
+                child: const Icon(Icons.bluetooth_disabled,
+                    color: AppTheme.danger, size: 48),
+              ),
+              const SizedBox(height: 24),
+              const Text(
+                'ACCESS DENIED',
+                style: TextStyle(
+                  color: AppTheme.danger,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 2,
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Bluetooth and Location permissions\nare required to operate.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    color: AppTheme.textSecondary, fontSize: 13, height: 1.6),
+              ),
+              const SizedBox(height: 28),
+              ElevatedButton.icon(
+                onPressed: PermissionHelper.openSettings,
+                icon: const Icon(Icons.settings, size: 16),
+                label: const Text('OPEN SETTINGS'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.danger,
+                  foregroundColor: Colors.white,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                ),
+              ),
+            ],
           ),
         ),
       );
+
+  Widget _buildErrorScreen(String error) => Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.error_outline, color: AppTheme.danger, size: 56),
+              const SizedBox(height: 20),
+              const Text(
+                'BOOT ERROR',
+                style: TextStyle(
+                  color: AppTheme.danger,
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 2,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppTheme.bgCard,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppTheme.borderGlow),
+                ),
+                child: Text(
+                  error,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: AppTheme.textSecondary,
+                    fontSize: 11,
+                    height: 1.6,
+                    fontFamily: 'monospace',
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
+              ElevatedButton.icon(
+                onPressed: () {
+                  setState(() {
+                    _initialized = false;
+                    _bootError = null;
+                  });
+                  _boot();
+                },
+                icon: const Icon(Icons.refresh, size: 16),
+                label: const Text('RETRY'),
+              ),
+            ],
+          ),
+        ),
+      );
+
+  Widget _buildErrorBanner(BluetoothService service) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: AppTheme.danger.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppTheme.danger.withValues(alpha: 0.3)),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.warning_amber_rounded,
+                color: AppTheme.danger, size: 14),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                service.errorMessage ?? 'Unknown Error',
+                style: const TextStyle(color: AppTheme.danger, fontSize: 11),
+              ),
+            ),
+          ],
+        ),
+      );
+}
+
+// ── Animated pulse dot for AppBar ────────────────────────
+
+class _PulseDot extends StatefulWidget {
+  @override
+  State<_PulseDot> createState() => _PulseDotState();
+}
+
+class _PulseDotState extends State<_PulseDot>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+  late Animation<double> _anim;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl =
+        AnimationController(vsync: this, duration: const Duration(seconds: 2))
+          ..repeat(reverse: true);
+    _anim = Tween(begin: 0.4, end: 1.0)
+        .animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut));
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _anim,
+      builder: (_, __) => Container(
+        width: 8,
+        height: 8,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: AppTheme.accentCyan,
+          boxShadow: [
+            BoxShadow(
+              color: AppTheme.accentCyan.withValues(alpha: _anim.value * 0.8),
+              blurRadius: 8,
+              spreadRadius: 2,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

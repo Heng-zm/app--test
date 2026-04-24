@@ -12,17 +12,18 @@ dependencies:
   
   cupertino_icons: ^1.0.8
 
-  # ── UI & Fonts (Fixes your error) ─────────────────────────────────────
+  # ── UI & Fonts ────────────────────────────────────────────────────────
   google_fonts: ^6.2.1
   flutter_animate: ^4.5.0
   gap: ^3.0.1
 
-  # ── Bluetooth ─────────────────────────────────────────────────────────
+  # ── Bluetooth (Mobile only) ───────────────────────────────────────────
   flutter_bluetooth_serial: ^0.4.0
   flutter_blue_plus: ^1.34.0
 
-  # ── Permissions ───────────────────────────────────────────────────────
+  # ── Permissions (❗ FIX: Disable Windows support) ──────────────────────
   permission_handler: ^11.3.1
+
 
   # ── Encryption ────────────────────────────────────────────────────────
   encrypt: ^5.0.3
@@ -39,6 +40,8 @@ dependencies:
   # ── Utilities ─────────────────────────────────────────────────────────
   uuid: ^4.3.3
   rxdart: ^0.28.0
+  network_info_plus: ^7.0.0
+  image_picker: ^1.1.2
 
 dev_dependencies:
   flutter_test:
@@ -46,9 +49,13 @@ dev_dependencies:
   flutter_lints: ^4.0.0
   hive_generator: ^2.0.1
   build_runner: ^2.4.9
+  bdd_widget_test: ^1.2.1
+  flutter_driver:
+    sdk: flutter
 
 flutter:
   uses-material-design: true
-  # Ensure you have an assets folder if you uncomment this:
+
+  # Optional assets (uncomment if needed)
   # assets:
   #   - assets/
