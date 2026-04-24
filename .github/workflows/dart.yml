@@ -3,47 +3,143 @@ name: iOS-ipa-build
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-ios:
-    name: 🎉 iOS Build
+    name: 🎉 iOS Release Build
     runs-on: macos-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
 
-      - name: Setup Flutter
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+
+      # Flutter 3.27.4 is required — Color.withValues() was added in 3.27.
+      # Your old pinned version 3.22.2 does not have this method and will
+      # fail with "The method 'withValues' isn't defined for the class Color".
+      - name: 🛠️ Setup Flutter
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: '3.27.4'
           channel: 'stable'
-          architecture: x64
+          cache: true
 
-      - name: Install dependencies
+      - name: 📦 Install pub dependencies
         run: flutter pub get
 
-      - name: Setup CocoaPods
-        run: pod repo update
-        working-directory: ios
+      # Your pubspec.yaml includes hive_generator + build_runner.
+      # This generates the required Hive adapter files before building.
+      - name: ⚙️ Run build_runner (Hive code generation)
+        run: flutter pub run build_runner build --delete-conflicting-outputs
 
-      - name: Build iOS app
-        run: flutter build ios --release --no-codesign
+      # --config-only generates Generated.xcconfig WITHOUT compiling Dart.
+      # This MUST run before pod install and before signing patches so that
+      # Generated.xcconfig already exists when we append to it in the step below.
+      - name: 🔧 Generate Xcode config (config-only, no build)
+        run: |
+          flutter build ios --release --config-only --no-codesign \
+            --build-number=${{ github.run_number }} \
+            --build-name=1.1.${{ github.run_number }}
 
-      - name: Create Payload directory
-        run: mkdir -p Payload
-        working-directory: build/ios/iphoneos
+      - name: 🦕 Pod install
+        run: |
+          cd ios
+          pod install --repo-update
 
-      - name: Move Runner.app to Payload
-        run: mv Runner.app Payload/
-        working-directory: build/ios/iphoneos
+      # All signing patches run AFTER Generated.xcconfig has been written.
+      # This is the key ordering fix — the old workflow patched too early
+      # and Flutter overwrote the changes during --config-only.
+      - name: 🔓 Patch Xcode signing (unsigned / sideload build)
+        run: |
+          PBX="ios/Runner.xcodeproj/project.pbxproj"
 
-      - name: Create IPA file
-        run: zip -qq -r -9 FlutterIpaExport.ipa Payload
-        working-directory: build/ios/iphoneos
+          sed -i '' 's/DEVELOPMENT_TEAM = [^;]*;//g'                               "$PBX"
+          sed -i '' 's/PROVISIONING_PROFILE_SPECIFIER = [^;]*;//g'                 "$PBX"
+          sed -i '' 's/PROVISIONING_PROFILE = [^;]*;//g'                           "$PBX"
+          sed -i '' 's/CODE_SIGN_STYLE = Automatic;/CODE_SIGN_STYLE = Manual;/g'   "$PBX"
+          sed -i '' 's/CODE_SIGNING_REQUIRED = YES;/CODE_SIGNING_REQUIRED = NO;/g' "$PBX"
+          sed -i '' 's/CODE_SIGN_IDENTITY = [^;]*;//g'                             "$PBX"
+          sed -i '' '/CODE_SIGNING_ALLOWED = YES;/d'                               "$PBX"
 
-      - name: Upload IPA to GitHub Releases
+          {
+            echo ""
+            echo "// Unsigned sideload overrides"
+            echo "CODE_SIGNING_ALLOWED=NO"
+            echo "CODE_SIGNING_REQUIRED=NO"
+            echo "CODE_SIGNING_IDENTITY="
+            echo "DEVELOPMENT_TEAM="
+            echo "PROVISIONING_PROFILE_SPECIFIER="
+          } >> ios/Flutter/Generated.xcconfig
+
+          for f in ios/Flutter/Release.xcconfig ios/Flutter/Debug.xcconfig; do
+            [ -f "$f" ] && {
+              echo "CODE_SIGNING_ALLOWED=NO"  >> "$f"
+              echo "CODE_SIGNING_REQUIRED=NO" >> "$f"
+            }
+          done
+
+          echo "✅ Signing patches applied."
+
+      # We call xcodebuild directly instead of `flutter build ios` because
+      # flutter build ios would re-invoke Flutter's config step and overwrite
+      # our signing patches. xcodebuild CLI flags have the highest priority
+      # and cannot be overridden by any xcconfig or pbxproj setting.
+      - name: 🏗️ Build iOS app (unsigned, xcodebuild)
+        run: |
+          xcodebuild \
+            -workspace ios/Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            MARKETING_VERSION=1.1.${{ github.run_number }} \
+            build
+
+      - name: 📦 Package IPA for sideloading
+        run: |
+          APP_PATH=$(find build/DerivedData \
+            -name "Runner.app" \
+            -path "*/Release-iphoneos/*" \
+            | head -1)
+
+          if [ -z "$APP_PATH" ]; then
+            echo "❌ Runner.app not found. Listing DerivedData:"
+            find build/DerivedData -name "*.app" || true
+            exit 1
+          fi
+
+          echo "✅ Found: $APP_PATH"
+          mkdir -p Payload
+          cp -r "$APP_PATH" Payload/Runner.app
+          zip -qq -r -9 BT-SecureChat.ipa Payload
+          echo "✅ IPA size: $(du -sh BT-SecureChat.ipa | cut -f1)"
+
+      - name: 🚀 Upload to GitHub Releases
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: build/ios/iphoneos/FlutterIpaExport.ipa
-          tag: v1.0
+          file: BT-SecureChat.ipa
+          asset_name: BT-SecureChat-v1.1.${{ github.run_number }}.ipa
+          tag: v1.1.${{ github.run_number }}
           overwrite: true
-          body: "This is the first release"
+          body: |
+            ## 🔒 BT SecureChat — v1.1.${{ github.run_number }}
+
+            | Field | Value |
+            |---|---|
+            | Platform | iOS (unsigned) |
+            | Flutter | 3.27.4 |
+            | Encryption | AES-256 |
+            | Build | ${{ github.run_number }} |
+
+            ### Installation
+            Use **AltStore**, **Sideloadly**, or **MapleSign** — no Apple Developer account required.
+
+            > ⚠️ Unsigned IPA — cannot be installed via App Store or TestFlight.
