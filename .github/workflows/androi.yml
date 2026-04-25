@@ -12,24 +12,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ──────────────────────────────────────────────────────────────────
-      # 1. Checkout
-      # ──────────────────────────────────────────────────────────────────
       - name: 📥 Checkout repository
         uses: actions/checkout@v4
 
-      # ──────────────────────────────────────────────────────────────────
-      # 2. Java 17 — required by AGP (Android Gradle Plugin) 8.x
-      # ──────────────────────────────────────────────────────────────────
       - name: ☕ Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      # ──────────────────────────────────────────────────────────────────
-      # 3. Flutter 3.27.4 — required for Color.withValues()
-      # ──────────────────────────────────────────────────────────────────
       - name: 🛠️ Setup Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -37,20 +28,60 @@ jobs:
           channel: 'stable'
           cache: true
 
-      # ──────────────────────────────────────────────────────────────────
-      # 4. Install pub dependencies
-      # ──────────────────────────────────────────────────────────────────
       - name: 📦 Install pub dependencies
         run: flutter pub get
 
-      # ──────────────────────────────────────────────────────────────────
-      # 5. Generate Hive adapters (hive_generator in pubspec.yaml)
-      # ──────────────────────────────────────────────────────────────────
       - name: ⚙️ Run build_runner (Hive code generation)
         run: flutter pub run build_runner build --delete-conflicting-outputs
 
       # ──────────────────────────────────────────────────────────────────
-      # 6. Build release APK (sideloadable, direct install)
+      # Patch old/abandoned packages that are missing `namespace` in their
+      # build.gradle. AGP 8+ (used by Flutter 3.27) requires every Android
+      # library module to declare a namespace. Old packages on pub.dev
+      # predate this requirement and were never updated.
+      #
+      # We patch the files directly in the pub cache — this is safe because
+      # the cache is local to this CI runner and thrown away after the job.
+      #
+      # Packages patched:
+      #   • flutter_bluetooth_serial 0.4.0 — abandoned, no namespace
+      # ──────────────────────────────────────────────────────────────────
+      - name: 🔧 Patch legacy plugin namespaces for AGP 8+
+        run: |
+          PUB_CACHE="${HOME}/.pub-cache/hosted/pub.dev"
+
+          patch_namespace() {
+            local PACKAGE="$1"
+            local NAMESPACE="$2"
+            local BUILD_GRADLE=$(find "$PUB_CACHE" -path "*/${PACKAGE}-*/android/build.gradle" | head -1)
+
+            if [ -z "$BUILD_GRADLE" ]; then
+              echo "⚠️  $PACKAGE: build.gradle not found in pub cache — skipping"
+              return
+            fi
+
+            # Check if namespace is already set
+            if grep -q "namespace" "$BUILD_GRADLE"; then
+              echo "✅ $PACKAGE: namespace already present — skipping"
+              return
+            fi
+
+            # Inject namespace into the android { } block
+            sed -i "s/^android {/android {\n    namespace '$NAMESPACE'/" "$BUILD_GRADLE"
+            echo "✅ $PACKAGE: namespace '$NAMESPACE' injected into $BUILD_GRADLE"
+          }
+
+          # flutter_bluetooth_serial
+          patch_namespace "flutter_bluetooth_serial" "io.github.edufolly.flutterbluetoothserial"
+
+          # Patch any other packages that might hit the same issue
+          patch_namespace "flutter_blue_plus"        "com.boskokg.flutter_blue_plus"
+          patch_namespace "permission_handler_android" "com.baseflow.permissionhandler"
+          patch_namespace "image_picker_android"     "io.flutter.plugins.imagepicker"
+          patch_namespace "network_info_plus"        "dev.fluttercommunity.plus.network_info"
+
+      # ──────────────────────────────────────────────────────────────────
+      # Build APK
       # ──────────────────────────────────────────────────────────────────
       - name: 🏗️ Build release APK
         run: |
@@ -59,7 +90,7 @@ jobs:
             --build-name=1.1.${{ github.run_number }}
 
       # ──────────────────────────────────────────────────────────────────
-      # 7. Build release AAB (Google Play Store upload format)
+      # Build AAB (Play Store format)
       # ──────────────────────────────────────────────────────────────────
       - name: 🏗️ Build release AAB (Play Store)
         run: |
@@ -67,9 +98,6 @@ jobs:
             --build-number=${{ github.run_number }} \
             --build-name=1.1.${{ github.run_number }}
 
-      # ──────────────────────────────────────────────────────────────────
-      # 8. Rename artifacts with version number for clarity
-      # ──────────────────────────────────────────────────────────────────
       - name: 📋 Rename build artifacts
         run: |
           VERSION="1.1.${{ github.run_number }}"
@@ -83,9 +111,6 @@ jobs:
           echo "✅ APK: $(du -sh BT-SecureChat-v${VERSION}.apk | cut -f1)"
           echo "✅ AAB: $(du -sh BT-SecureChat-v${VERSION}.aab | cut -f1)"
 
-      # ──────────────────────────────────────────────────────────────────
-      # 9. Upload APK to GitHub Releases
-      # ──────────────────────────────────────────────────────────────────
       - name: 🚀 Upload APK to GitHub Releases
         uses: svenstaro/upload-release-action@v2
         with:
@@ -115,12 +140,9 @@ jobs:
             2. Download and open the `.apk`
 
             ### Requirements
-            - Android 6.0+ (API 23+)
+            - Android 6.0+ (API 21+)
             - Bluetooth LE support
 
-      # ──────────────────────────────────────────────────────────────────
-      # 10. Upload AAB to GitHub Releases
-      # ──────────────────────────────────────────────────────────────────
       - name: 🚀 Upload AAB to GitHub Releases
         uses: svenstaro/upload-release-action@v2
         with:
