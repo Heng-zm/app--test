@@ -5,7 +5,6 @@ plugins {
 }
 
 import java.util.Properties
-import java.io.FileInputStream
 
 val localProperties = Properties()
 val localPropertiesFile = rootProject.file("local.properties")
@@ -19,7 +18,8 @@ val flutterVersionName = localProperties.getProperty("flutter.versionName") ?: "
 android {
     namespace = "com.kimheng.btsecurechat"
     compileSdk = 35
-    ndkVersion = flutter.ndkVersion
+    // All plugins (device_info_plus, flutter_blue_plus, etc.) require 27.0.12077973
+    ndkVersion = "27.0.12077973"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
