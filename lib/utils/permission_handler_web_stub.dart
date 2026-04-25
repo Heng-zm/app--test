@@ -1,21 +1,51 @@
+import 'dart:async';
+
 /// Web stub for permission_handler.
-/// This file is imported instead of package:permission_handler on web builds.
-/// All classes and methods are no-ops so the app compiles cleanly on web.
-
+/// Matches the v11.x API to prevent compilation errors on Web targets.
 class Permission {
-  const Permission._();
+  final String _label;
+  const Permission._(this._label);
 
-  static const Permission bluetooth = Permission._();
-  static const Permission bluetoothScan = Permission._();
-  static const Permission bluetoothConnect = Permission._();
-  static const Permission bluetoothAdvertise = Permission._();
-  static const Permission location = Permission._();
-  static const Permission locationWhenInUse = Permission._();
-  static const Permission camera = Permission._();
-  static const Permission microphone = Permission._();
-  static const Permission photos = Permission._();
+  // Bluetooth
+  static const Permission bluetooth = Permission._('bluetooth');
+  static const Permission bluetoothScan = Permission._('bluetoothScan');
+  static const Permission bluetoothConnect = Permission._('bluetoothConnect');
+  static const Permission bluetoothAdvertise =
+      Permission._('bluetoothAdvertise');
 
+  // Location
+  static const Permission location = Permission._('location');
+  static const Permission locationWhenInUse = Permission._('locationWhenInUse');
+  static const Permission locationAlways = Permission._('locationAlways');
+
+  // Hardware
+  static const Permission camera = Permission._('camera');
+  static const Permission microphone = Permission._('microphone');
+
+  // Media & Storage
+  static const Permission photos = Permission._('photos');
+  static const Permission videos = Permission._('videos');
+  static const Permission audio = Permission._('audio');
+  static const Permission storage = Permission._('storage');
+  static const Permission manageExternalStorage =
+      Permission._('manageExternalStorage');
+
+  // Misc
+  static const Permission notification = Permission._('notification');
+  static const Permission appTrackingTransparency =
+      Permission._('appTrackingTransparency');
+
+  /// Mock for Permission.status
+  Future<PermissionStatus> get status async => PermissionStatus.granted;
+
+  /// Mock for Permission.request()
   Future<PermissionStatus> request() async => PermissionStatus.granted;
+
+  /// 🛠️ FIX: Added to prevent "Member not found" if used in UI logic
+  Future<bool> get shouldShowRequestRationale async => false;
+
+  @override
+  String toString() => 'Permission.$_label';
 }
 
 class PermissionStatus {
@@ -24,14 +54,31 @@ class PermissionStatus {
 
   static const PermissionStatus granted = PermissionStatus._('granted');
   static const PermissionStatus denied = PermissionStatus._('denied');
+  static const PermissionStatus restricted = PermissionStatus._('restricted');
+  static const PermissionStatus permanentlyDenied =
+      PermissionStatus._('permanentlyDenied');
+  static const PermissionStatus limited = PermissionStatus._('limited');
+  static const PermissionStatus provisional = PermissionStatus._('provisional');
 
   bool get isGranted => _value == 'granted';
   bool get isDenied => _value == 'denied';
-  bool get isLimited => false;
-  bool get isPermanentlyDenied => false;
+  bool get isLimited => _value == 'limited';
+  bool get isRestricted => _value == 'restricted';
+  bool get isPermanentlyDenied => _value == 'permanentlyDenied';
+  bool get isProvisional => _value == 'provisional';
 
   @override
-  String toString() => _value;
+  String toString() => 'PermissionStatus.$_value';
 }
 
-Future<void> openAppSettings() async {}
+/// 🛠️ PERF: Updated extension to use modern Map.fromEntries
+extension PermissionListRequest on Iterable<Permission> {
+  Future<Map<Permission, PermissionStatus>> request() async {
+    return Map.fromEntries(
+      map((p) => MapEntry(p, PermissionStatus.granted)),
+    );
+  }
+}
+
+/// No-op for web settings.
+Future<bool> openAppSettings() async => true;

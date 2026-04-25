@@ -2,39 +2,51 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 /// Central platform detection used throughout the app.
-/// Avoids dart:io on Web (which throws) by checking kIsWeb first.
+/// Optimized with static final constants for performance.
 class AppPlatform {
   AppPlatform._();
 
-  static bool get isWeb => kIsWeb;
-  static bool get isAndroid => !kIsWeb && Platform.isAndroid;
-  static bool get isIOS => !kIsWeb && Platform.isIOS;
-  static bool get isMacOS => !kIsWeb && Platform.isMacOS;
-  static bool get isWindows => !kIsWeb && Platform.isWindows;
-  static bool get isLinux => !kIsWeb && Platform.isLinux;
-  static bool get isFuchsia => !kIsWeb && Platform.isFuchsia;
+  static final bool isWeb = kIsWeb;
 
-  static bool get isMobile => isAndroid || isIOS;
-  static bool get isDesktop => isMacOS || isWindows || isLinux;
+  // Platform checks (Evaluated once at startup)
+  static final bool isAndroid = !kIsWeb && Platform.isAndroid;
+  static final bool isIOS = !kIsWeb && Platform.isIOS;
+  static final bool isMacOS = !kIsWeb && Platform.isMacOS;
+  static final bool isWindows = !kIsWeb && Platform.isWindows;
+  static final bool isLinux = !kIsWeb && Platform.isLinux;
+  static final bool isFuchsia = !kIsWeb && Platform.isFuchsia;
 
-  /// Supports Bluetooth Classic SPP (only real Android hardware).
-  static bool get supportsClassicBluetooth => isAndroid;
+  // Aggregated platform groups
+  static final bool isMobile = isAndroid || isIOS;
+  static final bool isDesktop = isMacOS || isWindows || isLinux;
 
-  /// Supports BLE on all platforms except Fuchsia and Web (best effort).
-  static bool get supportsBLE =>
+  /// Supports Bluetooth Classic SPP.
+  /// flutter_bluetooth_serial is currently Android-only for your project.
+  static final bool supportsClassicBluetooth = isAndroid;
+
+  /// Supports BLE (Bluetooth Low Energy).
+  /// Based on flutter_blue_plus compatibility.
+  static final bool supportsBLE =
       isAndroid || isIOS || isMacOS || isWindows || isLinux;
 
-  /// Whether we need to request runtime permissions.
-  static bool get needsRuntimePermissions => isMobile;
+  /// Whether we need to request runtime permissions (Location/BT/Camera).
+  /// Desktop platforms usually handle this via Info.plist/Manifest or system dialogs on-demand.
+  static final bool needsRuntimePermissions = isMobile;
 
-  static String get name {
+  /// Returns the string representation of the current platform.
+  static final String name = _getPlatformName();
+
+  static String _getPlatformName() {
     if (isWeb) return 'Web';
     if (isAndroid) return 'Android';
     if (isIOS) return 'iOS';
     if (isMacOS) return 'macOS';
     if (isWindows) return 'Windows';
     if (isLinux) return 'Linux';
-    if (isFuchsia) return 'Fuchsia'; // Added for completeness
+    if (isFuchsia) return 'Fuchsia';
     return 'Unknown';
   }
+
+  /// 🛠️ NEW: Helps handle UI scaling for different environments
+  static bool get isSmallScreen => isMobile;
 }

@@ -32,23 +32,31 @@
     <key>NSBluetoothPeripheralUsageDescription</key>
     <string>BT SecureChat needs Bluetooth access to allow other devices to establish an encrypted link with your node.</string>
 
-    <!-- 3. Location Permissions (Required for Bluetooth discovery on legacy devices) -->
+    <!-- 3. Location Permissions (Required for discovery and SSID retrieval) -->
     <key>NSLocationWhenInUseUsageDescription</key>
-    <string>Location access is used solely to scan for the signal signatures of nearby Bluetooth devices.</string>
+    <string>Location access is used to scan for nearby Bluetooth signal signatures and identify the local network.</string>
     <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-    <string>Background location allows the app to maintain radio discovery even when the screen is locked.</string>
+    <string>Background location allows the app to maintain radio discovery and link stability even when the screen is locked.</string>
+    <key>NSLocationAlwaysUsageDescription</key>
+    <string>Continuous location access is required for persistent background Bluetooth discovery.</string>
 
-    <!-- 4. Media & File Sharing Permissions -->
+    <!-- 4. Local Network (Required for network_info_plus on iOS 14+) -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>This app uses the local network to determine connection context and improve peer discovery.</string>
+
+    <!-- 5. Media & File Sharing Permissions -->
     <key>NSCameraUsageDescription</key>
     <string>Camera access is required to capture photos to be sent through the encrypted tunnel.</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>Microphone access is needed for recording encrypted voice messages.</string>
     <key>NSPhotoLibraryUsageDescription</key>
-    <string>We need access to your photos to allow you to select files for secure transmission.</string>
+    <string>Access to your photos allows you to select media for secure transmission.</string>
     <key>NSPhotoLibraryAddUsageDescription</key>
-    <string>Required to save decrypted images received from other chat partners to your gallery.</string>
+    <string>Required to save decrypted images received from chat partners to your gallery.</string>
+    <key>LSSupportsOpeningDocumentsInPlace</key>
+    <true/>
 
-    <!-- 5. Security & Encryption Compliance -->
+    <!-- 6. Security & Encryption Compliance -->
     <key>ITSAppUsesNonExemptEncryption</key>
     <false/>
     <key>NSAppTransportSecurity</key>
@@ -57,14 +65,15 @@
         <false/>
     </dict>
 
-    <!-- 6. Background Operational Modes -->
+    <!-- 7. Background Operational Modes -->
     <key>UIBackgroundModes</key>
     <array>
         <string>bluetooth-central</string>
         <string>bluetooth-peripheral</string>
+        <string>fetch</string>
     </array>
 
-    <!-- 7. UI Appearance & Performance -->
+    <!-- 8. UI Appearance & Performance -->
     <key>UIUserInterfaceStyle</key>
     <string>Dark</string>
     <key>UIStatusBarStyle</key>
@@ -80,7 +89,7 @@
     <key>UIMainStoryboardFile</key>
     <string>Main</string>
 
-    <!-- 8. Device Orientations -->
+    <!-- 9. Device Orientations -->
     <key>UISupportedInterfaceOrientations</key>
     <array>
         <string>UIInterfaceOrientationPortrait</string>
@@ -93,7 +102,7 @@
         <string>UIInterfaceOrientationLandscapeRight</string>
     </array>
 
-    <!-- 9. Input & Logic Metadata -->
+    <!-- 10. Input & Logic Metadata -->
     <key>UIApplicationSupportsIndirectInputEvents</key>
     <true/>
 </dict>

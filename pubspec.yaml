@@ -9,7 +9,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  
+
   cupertino_icons: ^1.0.8
 
   # ── UI & Fonts ────────────────────────────────────────────────────────
@@ -17,13 +17,15 @@ dependencies:
   flutter_animate: ^4.5.0
   gap: ^3.0.1
 
-  # ── Bluetooth (Mobile only) ───────────────────────────────────────────
+  # ── Bluetooth ─────────────────────────────────────────────────────────
+  # flutter_bluetooth_serial: Android/iOS classic BT only
+  # flutter_blue_plus: BLE support
   flutter_bluetooth_serial: ^0.4.0
   flutter_blue_plus: ^1.34.0
 
-  # ── Permissions (❗ FIX: Disable Windows support) ──────────────────────
+  # ── Permissions & Device Info ─────────────────────────────────────────
   permission_handler: ^11.3.1
-
+  device_info_plus: ^10.1.0  # <── ADDED THIS to fix PermissionHelper errors
 
   # ── Encryption ────────────────────────────────────────────────────────
   encrypt: ^5.0.3
@@ -56,6 +58,11 @@ dev_dependencies:
 flutter:
   uses-material-design: true
 
-  # Optional assets (uncomment if needed)
+  # Custom platform handling for Windows compatibility
+  plugin:
+    platforms:
+      windows:
+        default_package: null
+
   # assets:
   #   - assets/

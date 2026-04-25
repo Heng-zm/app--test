@@ -1,0 +1,109 @@
+name: Windows-exe-build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: 🪟 Windows Release Build
+    runs-on: windows-latest
+
+    steps:
+      # 1. Checkout
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. Enable symlinks (important for Flutter plugins)
+      - name: 🔗 Enable Symlinks
+        run: git config --global core.symlinks true
+
+      # 3. Setup Flutter
+      - name: 🛠️ Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.27.4'
+          channel: 'stable'
+          cache: true
+
+      # 4. Enable Windows + get dependencies
+      - name: 📦 Install dependencies
+        run: |
+          flutter config --enable-windows-desktop
+          flutter clean
+          flutter pub get
+
+      # 5. Run build_runner
+      - name: ⚙️ Code generation
+        run: flutter pub run build_runner build --delete-conflicting-outputs
+
+      # 6. Build Windows app
+      - name: 🏗️ Build Windows
+        run: flutter build windows --release
+
+      # 7. Find EXE
+      - name: 🔍 Locate EXE
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Recurse "build\windows" -Filter "*.exe" |
+                 Where-Object { $_.FullName -match "Release" } |
+                 Select-Object -First 1
+
+          if (!$exe) {
+            Write-Host "❌ EXE not found"
+            Get-ChildItem -Recurse "build\windows"
+            exit 1
+          }
+
+          Write-Host "✅ Found EXE: $($exe.FullName)"
+          "RELEASE_DIR=$($exe.DirectoryName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      # 8. Install NSIS
+      - name: 📥 Install NSIS
+        run: choco install nsis --yes
+
+      # 9. Create installer
+      - name: 🔨 Build Installer
+        shell: pwsh
+        run: |
+          $version = "1.1.${{ github.run_number }}"
+          $releaseDir = $env:RELEASE_DIR
+
+          $script = @'
+          Unicode true
+          !define APP_NAME "BT SecureChat"
+          !define APP_VERSION "APPVER"
+          !define APP_EXE "bluetooth_chat.exe"
+          !define BUILD_DIR "BUILDDIR"
+
+          Name "${APP_NAME} ${APP_VERSION}"
+          OutFile "BT-SecureChat-Setup-v${APP_VERSION}.exe"
+          InstallDir "$PROGRAMFILES64\BT SecureChat"
+          RequestExecutionLevel admin
+
+          Page directory
+          Page instfiles
+
+          Section "Install"
+            SetOutPath "$INSTDIR"
+            File /r "${BUILD_DIR}\*.*"
+            CreateShortcut "$DESKTOP\BT SecureChat.lnk" "$INSTDIR\${APP_EXE}"
+          SectionEnd
+          '@
+
+          $script = $script -replace 'APPVER', $version -replace 'BUILDDIR', $releaseDir
+          $script | Out-File "installer.nsi" -Encoding UTF8
+
+          makensis installer.nsi
+
+      # 10. Upload release
+      - name: 🚀 Upload Release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: BT-SecureChat-Setup-v*
+          file_glob: true
+          tag: v1.1.${{ github.run_number }}
+          overwrite: true

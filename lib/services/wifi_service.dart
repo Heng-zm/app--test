@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data'; // 🟢 NEW: Required for Uint8List (Image bytes)
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:network_info_plus/network_info_plus.dart';
@@ -49,7 +49,13 @@ class WifiService extends ChangeNotifier {
   String? get errorMessage => _errorMessage;
   String? get localIP => _localIP;
 
-  // ── Host (Server) Mode + Auto-Discovery Beacon ──────────
+  // ── Message Management ──────────────────────────────────
+  void clearMessages() {
+    _messages.clear();
+    _notify();
+  }
+
+  // ── Host Mode ───────────────────────────────────────────
   Future<void> startHosting() async {
     if (kIsWeb) return;
     await disconnect();
@@ -58,28 +64,13 @@ class WifiService extends ChangeNotifier {
       _setState(WifiConnectionState.hosting);
 
       final info = NetworkInfo();
-      _localIP = await info.getWifiIP() ?? '192.168.43.1';
+      _localIP = await info.getWifiIP();
 
-      _serverSocket = await ServerSocket.bind(InternetAddress.anyIPv4, 4567);
+      _serverSocket =
+          await ServerSocket.bind(InternetAddress.anyIPv4, 4567, shared: true);
 
       _serverSocket!.listen((Socket incomingSocket) {
-        _socket = incomingSocket;
-
-        _stopUdp();
-        _serverSocket?.close();
-        _serverSocket = null;
-
-        _socketSub?.cancel();
-        _socketSub = _socket!.listen(
-          _onRawData,
-          onError: (e) {
-            _setError('Connection error: $e');
-            disconnect();
-          },
-          onDone: disconnect,
-        );
-
-        _setState(WifiConnectionState.connected);
+        _handleNewConnection(incomingSocket);
       });
 
       _startUdpBroadcast();
@@ -88,41 +79,60 @@ class WifiService extends ChangeNotifier {
     }
   }
 
+  void _handleNewConnection(Socket incomingSocket) {
+    _socket = incomingSocket;
+
+    // TCP Optimizations
+    _socket!.setOption(SocketOption.tcpNoDelay, true);
+
+    _stopUdp();
+    _serverSocket?.close();
+    _serverSocket = null;
+
+    _socketSub?.cancel();
+    _socketSub = _socket!.listen(
+      _onRawData,
+      onError: (e) => disconnect(),
+      onDone: () => disconnect(),
+      cancelOnError: true,
+    );
+
+    _setState(WifiConnectionState.connected);
+  }
+
+  // ── Discovery Logic ─────────────────────────────────────
   Future<void> _startUdpBroadcast() async {
     try {
-      _udpSocket = await RawDatagramSocket.bind(
-        InternetAddress.anyIPv4,
-        0,
-        reuseAddress: true,
-        reusePort: true,
-      );
+      _udpSocket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0,
+          reuseAddress: true);
       _udpSocket!.broadcastEnabled = true;
+
+      String broadcastAddr = '255.255.255.255';
+      if (_localIP != null && _localIP!.contains('.')) {
+        broadcastAddr =
+            '${_localIP!.substring(0, _localIP!.lastIndexOf('.'))}.255';
+      }
 
       _broadcastTimer = Timer.periodic(const Duration(milliseconds: 1500), (_) {
         if (_localIP != null && _udpSocket != null) {
           final data = utf8.encode('BTChatHost:$_localIP');
-          _udpSocket!.send(data, InternetAddress('255.255.255.255'), 4568);
+          _udpSocket!.send(data, InternetAddress(broadcastAddr), 4568);
         }
       });
     } catch (e) {
-      debugPrint('UDP Broadcast failed: $e');
+      debugPrint('UDP Discovery failed: $e');
     }
   }
 
-  // ── Client Mode (Auto-Search) ───────────────────────────
+  // ── Client Mode ─────────────────────────────────────────
   Future<void> startAutoConnect() async {
     if (kIsWeb) return;
     await disconnect();
 
     try {
       _setState(WifiConnectionState.searching);
-
-      _udpSocket = await RawDatagramSocket.bind(
-        InternetAddress.anyIPv4,
-        4568,
-        reuseAddress: true,
-        reusePort: true,
-      );
+      _udpSocket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 4568,
+          reuseAddress: true);
 
       _udpSocket!.listen((RawSocketEvent event) {
         if (event == RawSocketEvent.read &&
@@ -131,7 +141,7 @@ class WifiService extends ChangeNotifier {
           if (datagram != null) {
             final msg = utf8.decode(datagram.data);
             if (msg.startsWith('BTChatHost:')) {
-              final ip = msg.substring(11).trim();
+              final ip = msg.split(':')[1].trim();
               _stopUdp();
               connectToHost(ip);
             }
@@ -143,164 +153,140 @@ class WifiService extends ChangeNotifier {
     }
   }
 
-  // ── Client Mode (Manual IP Fallback) ────────────────────
   Future<void> connectToHost(String ipAddress) async {
     if (kIsWeb) return;
     if (_state != WifiConnectionState.searching) await disconnect();
 
     try {
       _setState(WifiConnectionState.connecting);
-
       _socket = await Socket.connect(ipAddress, 4567,
           timeout: const Duration(seconds: 5));
+      _socket!.setOption(SocketOption.tcpNoDelay, true);
 
-      _socketSub?.cancel();
       _socketSub = _socket!.listen(
         _onRawData,
-        onError: (e) {
-          _setError('Connection lost: $e');
-          disconnect();
-        },
-        onDone: disconnect,
+        onError: (e) => disconnect(),
+        onDone: () => disconnect(),
+        cancelOnError: true,
       );
 
       _setState(WifiConnectionState.connected);
     } catch (e) {
-      _setError('Failed to connect: $e');
+      _setError('Connection failed: $e');
     }
   }
 
-  // ── Data Processing ─────────────────────────────────────
+  // ── Data Handling ───────────────────────────────────────
   void _onRawData(List<int> data) {
+    // 🛡️ Safety: Prevent buffer overflow (Max 10MB)
+    if (_byteBuffer.length > 10 * 1024 * 1024) _byteBuffer.clear();
+
     _byteBuffer.addAll(data);
-    bool hasNewMessages = false;
 
-    int idx;
-    while ((idx = _byteBuffer.indexOf(10)) != -1) {
-      try {
-        final lineBytes = _byteBuffer.sublist(0, idx);
-        final line = utf8.decode(lineBytes, allowMalformed: true).trim();
+    while (true) {
+      int newlineIndex = _byteBuffer.indexOf(10);
+      if (newlineIndex == -1) break;
 
-        if (line.isNotEmpty) {
-          final msg = _parsePacket(line);
-          if (msg != null) {
-            _messages.add(msg);
-            hasNewMessages = true;
-          }
-        }
-      } catch (_) {
-      } finally {
-        _byteBuffer.removeRange(0, idx + 1);
+      final packetBytes = _byteBuffer.sublist(0, newlineIndex);
+      _byteBuffer.removeRange(0, newlineIndex + 1);
+
+      if (packetBytes.isEmpty) continue;
+
+      final line = utf8.decode(packetBytes, allowMalformed: true);
+
+      // 🛠️ PERF: Use Isolates for long image data, Main thread for short text
+      if (line.length > 5000) {
+        _processPacketInBg(line);
+      } else {
+        _processPacketSync(line);
       }
     }
-
-    if (hasNewMessages) _notify();
   }
 
-  // 🟢 NEW: Parses JSON to detect if payload is 'text' or 'image'
-  Message? _parsePacket(String line) {
-    try {
-      final json = jsonDecode(line) as Map<String, dynamic>;
-      final cipher = json['t'] as String? ?? '';
-      final type = json['type'] as String? ?? 'text'; // Check for image flag
+  void _processPacketSync(String line) {
+    final msg = _parseAndDecrypt(
+        {'line': line, 'encryption': _encryption, 'uuid': _uuid.v4()});
+    if (msg != null) {
+      _messages.add(msg);
+      _notify();
+    }
+  }
 
-      final plain = _encryption.decrypt(cipher);
+  Future<void> _processPacketInBg(String line) async {
+    try {
+      final Message? msg = await compute(_parseAndDecrypt, {
+        'line': line,
+        'encryption': _encryption,
+        'uuid': _uuid.v4(),
+      });
+      if (msg != null && !_disposed) {
+        _messages.add(msg);
+        _notify();
+      }
+    } catch (e) {
+      debugPrint('Isolate processing error: $e');
+    }
+  }
+
+  static Message? _parseAndDecrypt(Map<String, dynamic> args) {
+    try {
+      final String line = args['line'];
+      final EncryptionService encryption = args['encryption'];
+      final json = jsonDecode(line);
+      final plain = encryption.decrypt(json['t'] as String);
 
       return Message(
-        id: _uuid.v4(),
+        id: args['uuid'],
         text: plain,
-        encryptedText: cipher,
+        encryptedText: json['t'],
         isMine: false,
         timestamp: DateTime.now(),
-        isImage: type == 'image', // 🟢 Passes the flag to the UI
+        isImage: json['type'] == 'image',
       );
     } catch (_) {
-      return Message(
-        id: _uuid.v4(),
-        text: 'Decryption Error: Data Corrupted',
-        encryptedText:
-            line.substring(0, line.length > 50 ? 50 : line.length) + '...',
-        isMine: false,
-        timestamp: DateTime.now(),
-        isDecryptionError: true,
-      );
+      return null;
     }
   }
 
-  // ── Send Message ────────────────────────────────────────
+  // ── Send Logic ──────────────────────────────────────────
   Future<void> sendMessage(String text) async {
-    if (_socket == null || !isConnected || text.trim().isEmpty) return;
-
-    final trimmed = text.trim();
-    final encText = _encryption.encrypt(trimmed);
-
-    // 🟢 NEW: Explicitly mark this as a text packet
-    final packet =
-        utf8.encode('${jsonEncode({'type': 'text', 't': encText})}\n');
-
-    try {
-      _socket!.add(packet);
-      await _socket!.flush();
-
-      _messages.add(Message(
-        id: _uuid.v4(),
-        text: trimmed,
-        encryptedText: encText,
-        isMine: true,
-        timestamp: DateTime.now(),
-      ));
-
-      _notify();
-    } catch (e) {
-      _setError('Send failed: $e');
-      disconnect();
-    }
+    final enc = _encryption.encrypt(text.trim());
+    await _sendRawPacket({'type': 'text', 't': enc}, text.trim(), false);
   }
 
-  // ── 🟢 NEW: Send Encrypted Image Method ─────────────────
   Future<void> sendImage(Uint8List imageBytes) async {
-    if (_socket == null || !isConnected) return;
-
-    // Convert raw image bytes to a base64 string, then encrypt it
     final base64String = base64Encode(imageBytes);
-    final encText = _encryption.encrypt(base64String);
+    final enc = _encryption.encrypt(base64String);
+    await _sendRawPacket({'type': 'image', 't': enc}, base64String, true);
+  }
 
-    // Explicitly mark this as an image packet
-    final packet =
-        utf8.encode('${jsonEncode({'type': 'image', 't': encText})}\n');
-
+  Future<void> _sendRawPacket(
+      Map<String, String> data, String rawText, bool isImage) async {
+    if (_socket == null || !isConnected) return;
     try {
-      _socket!.add(packet);
+      _socket!.add(utf8.encode('${jsonEncode(data)}\n'));
       await _socket!.flush();
 
       _messages.add(Message(
         id: _uuid.v4(),
-        text: base64String, // Store base64 locally so the UI can render it
-        encryptedText: 'Image Data Hidden (Cipher length: ${encText.length})',
+        text: rawText,
+        encryptedText: isImage ? 'Image Data' : data['t']!,
         isMine: true,
         timestamp: DateTime.now(),
-        isImage: true,
+        isImage: isImage,
       ));
-
       _notify();
     } catch (e) {
-      _setError('Image send failed: $e');
+      _setError('Transmission failed');
       disconnect();
     }
   }
 
-  void clearMessages() {
-    _messages.clear();
-    _notify();
-  }
-
-  // ── Lifecycle & Cleanup ─────────────────────────────────
+  // ── Lifecycle ───────────────────────────────────────────
   void _stopUdp() {
     _broadcastTimer?.cancel();
     _broadcastTimer = null;
-    try {
-      _udpSocket?.close();
-    } catch (_) {}
+    _udpSocket?.close();
     _udpSocket = null;
   }
 
@@ -308,25 +294,22 @@ class WifiService extends ChangeNotifier {
     _stopUdp();
     await _socketSub?.cancel();
     _socketSub = null;
-
     try {
-      await _socket?.close();
       _socket?.destroy();
     } catch (_) {}
     _socket = null;
-
     try {
       await _serverSocket?.close();
     } catch (_) {}
     _serverSocket = null;
-
     _byteBuffer.clear();
-    _setState(WifiConnectionState.disconnected);
+    if (_state != WifiConnectionState.error)
+      _setState(WifiConnectionState.disconnected);
   }
 
   void _setState(WifiConnectionState s) {
     _state = s;
-    _errorMessage = null;
+    if (s != WifiConnectionState.error) _errorMessage = null;
     _notify();
   }
 

@@ -7,9 +7,11 @@ import '../theme/app_theme.dart';
 class WifiConnectionDialog extends StatefulWidget {
   const WifiConnectionDialog({super.key});
 
+  /// Static helper to launch the dialog.
   static void show(BuildContext context) {
     showDialog(
       context: context,
+      barrierDismissible: true, // Allow tapping outside to close
       builder: (_) => const WifiConnectionDialog(),
     );
   }
@@ -30,370 +32,386 @@ class _WifiConnectionDialogState extends State<WifiConnectionDialog> {
 
   @override
   Widget build(BuildContext context) {
+    // 🛠️ PERF: Using select/watch specifically for the state to minimize rebuilds.
     final wifiService = context.watch<WifiService>();
+    final size = MediaQuery.sizeOf(context);
 
     return Dialog(
       backgroundColor: Colors.transparent,
-      insetPadding: const EdgeInsets.all(20),
-      child: Container(
-        padding: const EdgeInsets.all(24),
-        decoration: BoxDecoration(
-          color: AppTheme.bgCard,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-              color: AppTheme.accentCyan.withValues(alpha: 0.3), width: 1.5),
-          boxShadow: [
-            BoxShadow(
-              color: AppTheme.accentCyan.withValues(alpha: 0.1),
-              blurRadius: 20,
-              spreadRadius: 2,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      // 🛠️ FIX: Wrap in a GestureDetector to unfocus when tapping outside text fields
+      child: GestureDetector(
+        onTap: () => FocusScope.of(context).unfocus(),
+        child: Container(
+          constraints:
+              BoxConstraints(maxWidth: 500, maxHeight: size.height * 0.8),
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: AppTheme.bgCard,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: AppTheme.accentCyan.withValues(alpha: 0.3),
+              width: 1.5,
             ),
-          ],
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // ── HEADER ──
-            Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: AppTheme.accentCyan.withValues(alpha: 0.1),
-                    shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.5),
+                blurRadius: 15,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildHeader(),
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 20),
+                child: Divider(color: AppTheme.borderGlow, height: 1),
+              ),
+              // 🛠️ FIX: Flexible + SingleChildScrollView prevents "Bottom Overflow"
+              // when the manual IP keyboard is open.
+              Flexible(
+                child: SingleChildScrollView(
+                  physics: const BouncingScrollPhysics(),
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 300),
+                    child: _buildStateContent(wifiService),
                   ),
-                  child: const Icon(Icons.wifi_tethering,
-                      color: AppTheme.accentCyan, size: 24),
-                ),
-                const SizedBox(width: 16),
-                const Text(
-                  'WLAN UPLINK',
-                  style: TextStyle(
-                    color: AppTheme.textPrimary,
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 2,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 24),
-            Container(height: 1, color: AppTheme.borderGlow),
-            const SizedBox(height: 24),
-
-            // ── DYNAMIC BODY ──
-            Flexible(
-              child: SingleChildScrollView(
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 300),
-                  child: _buildStateContent(wifiService),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildStateContent(WifiService wifiService) {
-    // ── CONNECTED STATE ──
-    if (wifiService.state == WifiConnectionState.connected) {
-      return Column(
-        key: const ValueKey('connected'),
-        children: [
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: AppTheme.accentGreen.withValues(alpha: 0.1),
-            ),
-            child:
-                const Icon(Icons.shield, color: AppTheme.accentGreen, size: 48),
+  Widget _buildHeader() {
+    return Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: AppTheme.accentCyan.withValues(alpha: 0.1),
+            shape: BoxShape.circle,
           ),
-          const SizedBox(height: 20),
-          const Text(
-            'SECURE TUNNEL ESTABLISHED',
-            style: TextStyle(
-                color: AppTheme.accentGreen,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 1),
+          child: const Icon(Icons.wifi_tethering,
+              color: AppTheme.accentCyan, size: 22),
+        ),
+        const SizedBox(width: 12),
+        const Text(
+          'WLAN UPLINK',
+          style: TextStyle(
+            color: AppTheme.textPrimary,
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 1.5,
           ),
-          const SizedBox(height: 8),
-          const Text(
-            'Traffic is currently routing over high-speed local Wi-Fi.',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
-          ),
-          const SizedBox(height: 32),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              style: OutlinedButton.styleFrom(
-                foregroundColor: AppTheme.danger,
-                side: BorderSide(color: AppTheme.danger.withValues(alpha: 0.5)),
-                padding: const EdgeInsets.symmetric(vertical: 16),
-              ),
-              onPressed: () {
-                wifiService.disconnect();
-                Navigator.pop(context);
-              },
-              icon: const Icon(Icons.link_off),
-              label: const Text('DISCONNECT'),
-            ),
-          ),
-        ],
-      );
-    }
+        ),
+        const Spacer(),
+        IconButton(
+          onPressed: () => Navigator.pop(context),
+          icon: const Icon(Icons.close, color: AppTheme.textDim, size: 20),
+        ),
+      ],
+    );
+  }
 
-    // ── HOSTING STATE ──
-    if (wifiService.state == WifiConnectionState.hosting) {
-      return Column(
-        key: const ValueKey('hosting'),
-        children: [
-          const CircularProgressIndicator(
+  Widget _buildStateContent(WifiService wifiService) {
+    switch (wifiService.state) {
+      case WifiConnectionState.connected:
+        return _buildConnectedView(wifiService);
+      case WifiConnectionState.hosting:
+        return _buildHostingView(wifiService);
+      case WifiConnectionState.searching:
+      case WifiConnectionState.connecting:
+        return _buildConnectingView(wifiService);
+      case WifiConnectionState.disconnected:
+      case WifiConnectionState.error:
+        return _buildMenuView(wifiService);
+    }
+  }
+
+  // ── Sub-Views ────────────────────────────────────────────────────────────
+
+  Widget _buildConnectedView(WifiService service) {
+    return Column(
+      key: const ValueKey('connected'),
+      children: [
+        const Icon(Icons.verified_user, color: AppTheme.accentGreen, size: 60),
+        const SizedBox(height: 16),
+        const Text(
+          'SECURE TUNNEL ACTIVE',
+          style: TextStyle(
+              color: AppTheme.accentGreen,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 1),
+        ),
+        const SizedBox(height: 12),
+        const Text(
+          'Encrypted traffic is now routing over local hardware interface.',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+              color: AppTheme.textSecondary, fontSize: 12, height: 1.5),
+        ),
+        const SizedBox(height: 32),
+        _actionButton(
+          label: 'TERMINATE UPLINK',
+          icon: Icons.link_off,
+          color: AppTheme.danger,
+          onPressed: () {
+            service.disconnect();
+            Navigator.pop(context);
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildHostingView(WifiService service) {
+    return Column(
+      key: const ValueKey('hosting'),
+      children: [
+        const SizedBox(
+          height: 50,
+          width: 50,
+          child: CircularProgressIndicator(
               color: AppTheme.accentCyan, strokeWidth: 2),
-          const SizedBox(height: 24),
-          const Text(
-            'BROADCASTING HOST BEACON',
+        ),
+        const SizedBox(height: 24),
+        const Text('BROADCASTING BEACON',
             style: TextStyle(
-                color: AppTheme.textPrimary, fontSize: 12, letterSpacing: 1.5),
-          ),
-          const SizedBox(height: 16),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            decoration: BoxDecoration(
+                color: AppTheme.textSecondary, fontSize: 11, letterSpacing: 2)),
+        const SizedBox(height: 16),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
               color: AppTheme.bgDeep,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: AppTheme.borderGlow),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Column(
+              border: Border.all(color: AppTheme.borderGlow)),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('IP ADDRESS',
-                        style:
-                            TextStyle(color: AppTheme.textDim, fontSize: 10)),
+                    const Text('GATEWAY IP',
+                        style: TextStyle(color: AppTheme.textDim, fontSize: 9)),
                     const SizedBox(height: 4),
-                    Text(
-                      wifiService.localIP ?? 'Detecting...',
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontFamily: 'monospace',
-                        fontWeight: FontWeight.bold,
-                        color: AppTheme.accentCyan,
-                      ),
-                    ),
+                    Text(service.localIP ?? '0.0.0.0',
+                        style: const TextStyle(
+                            fontSize: 18,
+                            fontFamily: 'monospace',
+                            fontWeight: FontWeight.bold,
+                            color: AppTheme.accentCyan)),
                   ],
                 ),
-                IconButton(
-                  icon: const Icon(Icons.copy,
-                      color: AppTheme.textSecondary, size: 20),
-                  onPressed: () {
-                    if (wifiService.localIP != null) {
-                      Clipboard.setData(
-                          ClipboardData(text: wifiService.localIP!));
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('IP Copied to Clipboard')),
-                      );
-                    }
-                  },
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 32),
-          TextButton(
-            onPressed: wifiService.disconnect,
-            child: const Text('ABORT',
-                style: TextStyle(color: AppTheme.danger, letterSpacing: 2)),
-          ),
-        ],
-      );
-    }
-
-    // ── SEARCHING / CONNECTING STATE ──
-    if (wifiService.state == WifiConnectionState.searching ||
-        wifiService.state == WifiConnectionState.connecting) {
-      final isSearching = wifiService.state == WifiConnectionState.searching;
-      return Column(
-        key: const ValueKey('searching'),
-        children: [
-          CircularProgressIndicator(
-            color: isSearching ? AppTheme.accentCyan : AppTheme.accentGreen,
-            strokeWidth: 2,
-          ),
-          const SizedBox(height: 24),
-          Text(
-            isSearching ? 'INTERCEPTING BEACON...' : 'NEGOTIATING HANDSHAKE...',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: isSearching ? AppTheme.accentCyan : AppTheme.accentGreen,
-              letterSpacing: 2,
-              fontSize: 12,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 32),
-          TextButton(
-            onPressed: wifiService.disconnect,
-            child: const Text('ABORT',
-                style: TextStyle(color: AppTheme.danger, letterSpacing: 2)),
-          ),
-        ],
-      );
-    }
-
-    // ── DISCONNECTED STATE (MENU) ──
-    return Column(
-      key: const ValueKey('menu'),
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        // Instructions
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: AppTheme.bgSurface,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: const Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('1. Turn on Mobile Hotspot on Phone A',
-                  style:
-                      TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-              SizedBox(height: 6),
-              Text('2. Connect Phone B to that Hotspot',
-                  style:
-                      TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+              ),
+              IconButton(
+                icon: const Icon(Icons.copy,
+                    color: AppTheme.accentCyan, size: 20),
+                onPressed: () async {
+                  if (service.localIP == null) return;
+                  await Clipboard.setData(
+                      ClipboardData(text: service.localIP!));
+                  if (!mounted) return; // 🛠️ FIX: Async gap check
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                      content: Text('IP Copied to Clipboard'),
+                      behavior: SnackBarBehavior.floating));
+                },
+              ),
             ],
           ),
         ),
         const SizedBox(height: 24),
+        _actionButton(
+            label: 'STOP HOSTING',
+            color: AppTheme.danger,
+            onPressed: service.disconnect),
+      ],
+    );
+  }
 
-        // Host Button
-        OutlinedButton.icon(
-          style: OutlinedButton.styleFrom(
-            foregroundColor: AppTheme.accentCyan,
-            side: BorderSide(color: AppTheme.accentCyan.withValues(alpha: 0.5)),
-            padding: const EdgeInsets.symmetric(vertical: 14),
-          ),
-          icon: const Icon(Icons.router),
-          label: const Text('ACT AS HOST (Phone A)'),
-          onPressed: wifiService.startHosting,
+  Widget _buildConnectingView(WifiService service) {
+    final isSearching = service.state == WifiConnectionState.searching;
+    return Column(
+      key: const ValueKey('searching'),
+      children: [
+        const SizedBox(
+            height: 40,
+            width: 40,
+            child: CircularProgressIndicator(
+                color: AppTheme.accentCyan, strokeWidth: 2)),
+        const SizedBox(height: 24),
+        Text(
+          isSearching ? 'SCANNING FOR BEACON...' : 'ESTABLISHING HANDSHAKE...',
+          style: const TextStyle(
+              color: AppTheme.accentCyan,
+              fontWeight: FontWeight.bold,
+              fontSize: 12,
+              letterSpacing: 1),
         ),
+        const SizedBox(height: 32),
+        _actionButton(
+            label: 'CANCEL',
+            color: AppTheme.textDim,
+            onPressed: service.disconnect),
+      ],
+    );
+  }
 
-        const Padding(
-          padding: EdgeInsets.symmetric(vertical: 16),
-          child: Center(
-              child: Text('OR',
-                  style: TextStyle(
-                      color: AppTheme.textDim,
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold))),
-        ),
-
-        // Auto Connect Button
-        ElevatedButton.icon(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: AppTheme.accentCyan,
-            foregroundColor: AppTheme.bgDeep,
-            padding: const EdgeInsets.symmetric(vertical: 14),
-            elevation: 0,
-          ),
-          icon: const Icon(Icons.radar),
-          label: const Text('AUTO CONNECT (Phone B)',
-              style: TextStyle(fontWeight: FontWeight.bold)),
-          onPressed: wifiService.startAutoConnect,
-        ),
-
-        const SizedBox(height: 8),
-
-        // Manual IP Expander (Fallback)
+  Widget _buildMenuView(WifiService service) {
+    return Column(
+      key: const ValueKey('menu'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _buildInfoBox(),
+        const SizedBox(height: 24),
+        _actionButton(
+            label: 'ACT AS HOST (Phone A)',
+            icon: Icons.router,
+            color: AppTheme.accentCyan,
+            outlined: true,
+            onPressed: service.startHosting),
+        const SizedBox(height: 16),
+        _actionButton(
+            label: 'AUTO CONNECT (Phone B)',
+            icon: Icons.radar,
+            color: AppTheme.accentCyan,
+            onPressed: service.startAutoConnect),
         Center(
           child: TextButton(
             onPressed: () =>
                 setState(() => _showManualInput = !_showManualInput),
             child: Text(
-              _showManualInput ? 'Hide Manual IP' : 'Manual IP Fallback',
-              style: const TextStyle(
-                  color: AppTheme.textDim,
-                  fontSize: 11,
-                  decoration: TextDecoration.underline),
-            ),
+                _showManualInput ? 'HIDE MANUAL INPUT' : 'MANUAL IP FALLBACK',
+                style: const TextStyle(
+                    color: AppTheme.textDim,
+                    fontSize: 10,
+                    decoration: TextDecoration.underline)),
           ),
         ),
-
         if (_showManualInput) ...[
-          const SizedBox(height: 8),
+          const SizedBox(height: 12),
           TextField(
             controller: _ipController,
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
             style: const TextStyle(
-                color: AppTheme.textPrimary, fontFamily: 'monospace'),
+                color: Colors.white, fontFamily: 'monospace', fontSize: 14),
             decoration: InputDecoration(
-              labelText: 'Host IP Address',
-              hintText: '192.168.43.1',
-              labelStyle: const TextStyle(color: AppTheme.textDim),
-              hintStyle:
-                  TextStyle(color: AppTheme.textDim.withValues(alpha: 0.5)),
+              labelText: 'HOST GATEWAY IP',
+              labelStyle:
+                  const TextStyle(fontSize: 10, color: AppTheme.textDim),
+              hintText: '192.168.x.x',
               filled: true,
-              fillColor: AppTheme.bgSurface,
+              fillColor: AppTheme.bgDeep,
               border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide.none,
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: AppTheme.accentCyan),
-              ),
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none),
             ),
           ),
           const SizedBox(height: 12),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.bgSurface,
-              foregroundColor: AppTheme.textPrimary,
-              padding: const EdgeInsets.symmetric(vertical: 14),
-            ),
-            onPressed: () {
-              if (_ipController.text.isNotEmpty) {
-                wifiService.connectToHost(_ipController.text.trim());
-              }
-            },
-            child: const Text('CONNECT MANUALLY'),
-          ),
+          _actionButton(
+              label: 'LINK MANUALLY',
+              color: AppTheme.textPrimary,
+              onPressed: () {
+                if (_ipController.text.isNotEmpty)
+                  service.connectToHost(_ipController.text.trim());
+              }),
         ],
-
-        // Error Message
-        if (wifiService.errorMessage != null) ...[
-          const SizedBox(height: 16),
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: AppTheme.danger.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: AppTheme.danger.withValues(alpha: 0.3)),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.error_outline,
-                    color: AppTheme.danger, size: 16),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    wifiService.errorMessage!,
-                    style:
-                        const TextStyle(color: AppTheme.danger, fontSize: 11),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ]
+        if (service.errorMessage != null) _buildErrorBox(service.errorMessage!),
       ],
+    );
+  }
+
+  // ── UI Helpers ───────────────────────────────────────────────────────────
+
+  Widget _buildInfoBox() {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+          color: AppTheme.bgSurface,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppTheme.borderGlow)),
+      child: const Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('PROTOCOL INSTRUCTIONS',
+              style: TextStyle(
+                  color: AppTheme.accentCyan,
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 1)),
+          SizedBox(height: 8),
+          Text(
+              '1. Enable Hotspot on Phone A\n2. Connect Phone B to that network\n3. Tap buttons below to sync',
+              style: TextStyle(
+                  color: AppTheme.textSecondary, fontSize: 11, height: 1.5)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildErrorBox(String msg) {
+    return Container(
+      margin: const EdgeInsets.only(top: 20),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+          color: AppTheme.danger.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppTheme.danger.withValues(alpha: 0.2))),
+      child: Row(
+        children: [
+          const Icon(Icons.error_outline, color: AppTheme.danger, size: 16),
+          const SizedBox(width: 10),
+          Expanded(
+              child: Text(msg,
+                  style:
+                      const TextStyle(color: AppTheme.danger, fontSize: 11))),
+        ],
+      ),
+    );
+  }
+
+  Widget _actionButton(
+      {required String label,
+      required Color color,
+      required VoidCallback onPressed,
+      IconData? icon,
+      bool outlined = false}) {
+    final style = outlined
+        ? OutlinedButton.styleFrom(
+            foregroundColor: color,
+            side: BorderSide(color: color.withValues(alpha: 0.5)),
+            padding: const EdgeInsets.symmetric(vertical: 15))
+        : ElevatedButton.styleFrom(
+            backgroundColor: color,
+            foregroundColor: AppTheme.bgDeep,
+            padding: const EdgeInsets.symmetric(vertical: 15),
+            elevation: 0);
+
+    return SizedBox(
+      width: double.infinity,
+      child: outlined
+          ? OutlinedButton.icon(
+              onPressed: onPressed,
+              icon:
+                  icon != null ? Icon(icon, size: 18) : const SizedBox.shrink(),
+              label: Text(label,
+                  style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                      letterSpacing: 1)))
+          : ElevatedButton.icon(
+              onPressed: onPressed,
+              icon:
+                  icon != null ? Icon(icon, size: 18) : const SizedBox.shrink(),
+              label: Text(label,
+                  style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                      letterSpacing: 1))),
     );
   }
 }

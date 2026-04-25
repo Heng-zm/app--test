@@ -1,92 +1,171 @@
 import 'package:flutter/foundation.dart';
-import 'package:permission_handler/permission_handler.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 import 'app_platform.dart';
+
+// ✅ Conditional import: Uses real package on mobile, and your stub on web.
+import 'package:permission_handler/permission_handler.dart'
+    if (dart.library.html) 'permission_handler_web_stub.dart';
 
 class PermissionHelper {
   PermissionHelper._();
 
-  /// Requests all necessary permissions (BT, Location, Camera, Photos, Mic).
-  /// Returns true only if the "hard" requirements (Bluetooth/Connection) are met.
+  static final DeviceInfoPlugin _deviceInfo = DeviceInfoPlugin();
+
+  /// Requests all necessary permissions for the app in a single batch.
   static Future<bool> requestAllPermissions() async {
-    // Web and desktop: no runtime permissions needed via this handler
-    if (!AppPlatform.needsRuntimePermissions) {
-      return true;
-    }
+    if (!AppPlatform.needsRuntimePermissions) return true;
 
-    final List<Permission> required = [];
+    final List<Permission> permissionsToRequest = [];
 
-    // ── Bluetooth & Location ────────────────────────────────────────────────
+    // 🛠️ PERF: Cache SDK version once per request cycle
+    int sdkInt = 0;
     if (AppPlatform.isAndroid) {
-      required.addAll([
-        Permission.bluetoothScan,
-        Permission.bluetoothConnect,
-        Permission.bluetoothAdvertise,
-        Permission.location,
-      ]);
-    } else if (AppPlatform.isIOS) {
-      required.add(Permission.bluetooth);
-      required.add(Permission.locationWhenInUse);
+      final androidInfo = await _deviceInfo.androidInfo;
+      sdkInt = androidInfo.version.sdkInt;
     }
 
-    // ── Media & Hardware ────────────────────────────────────────────────────
-    required.addAll([
+    // ── 1. Connectivity (Bluetooth & Location) ───────────────────────────
+    if (AppPlatform.isAndroid) {
+      // network_info_plus (v7/v8) requires Location to see SSID on all versions
+      permissionsToRequest.add(Permission.location);
+
+      if (sdkInt >= 31) {
+        // Android 12+ specific BT permissions
+        permissionsToRequest.addAll([
+          Permission.bluetoothScan,
+          Permission.bluetoothConnect,
+          Permission.bluetoothAdvertise,
+        ]);
+      }
+    } else if (AppPlatform.isIOS) {
+      permissionsToRequest.addAll([
+        Permission.bluetooth,
+        Permission.locationWhenInUse,
+      ]);
+    }
+
+    // ── 2. Hardware & Media (Camera, Mic, Photos) ────────────────────────
+    permissionsToRequest.addAll([
       Permission.camera,
       Permission.microphone,
-      // Permission.photos automatically maps to READ_MEDIA_IMAGES on Android 13+
-      Permission.photos,
     ]);
 
-    if (required.isEmpty) {
-      return true;
-    }
-
-    // Request everything in a single system sequence
-    final Map<Permission, PermissionStatus> statuses = await required.request();
-
-    // Debug logging for denied/restricted permissions
-    statuses.forEach((permission, status) {
-      if (!status.isGranted && !status.isLimited) {
-        debugPrint('[Permissions] Restricted: $permission -> $status');
+    if (AppPlatform.isAndroid) {
+      if (sdkInt >= 33) {
+        permissionsToRequest.addAll([
+          Permission.photos,
+          Permission.videos,
+          Permission.notification,
+        ]);
+      } else {
+        permissionsToRequest.add(Permission.storage);
       }
-    });
-
-    // ── Platform-Specific Validation Helper ─────────────────────────────────
-
-    bool isGood(Permission p) {
-      final status = statuses[p];
-      // isLimited is treated as success (specifically for iOS Photo Library)
-      return status != null && (status.isGranted || status.isLimited);
+    } else if (AppPlatform.isIOS) {
+      permissionsToRequest.add(Permission.photos);
     }
 
-    // ── Final Evaluation ────────────────────────────────────────────────────
+    // ── 3. Performance Check: Filter out already granted permissions ──────
+    final statuses =
+        await Future.wait(permissionsToRequest.map((p) => p.status));
+    final List<Permission> actuallyNeeded = [];
+
+    for (int i = 0; i < permissionsToRequest.length; i++) {
+      final status = statuses[i];
+      // Note: We treat 'limited' (iOS) as granted.
+      if (!status.isGranted && !status.isLimited) {
+        actuallyNeeded.add(permissionsToRequest[i]);
+      }
+    }
+
+    if (actuallyNeeded.isEmpty) return _validateCorePermissions();
+
+    try {
+      await actuallyNeeded.request();
+    } catch (e) {
+      debugPrint('[Permissions] Request Batch Error: $e');
+    }
+
+    return _validateCorePermissions();
+  }
+
+  /// Validates core connectivity requirements based on OS version.
+  static Future<bool> _validateCorePermissions() async {
+    if (!AppPlatform.needsRuntimePermissions) return true;
 
     if (AppPlatform.isAndroid) {
-      // Core requirements for Android 12+: Scan + Connect + Advertise
-      // We do not strictly fail on 'location' here because Scan handles it.
-      return isGood(Permission.bluetoothScan) &&
-          isGood(Permission.bluetoothConnect) &&
-          isGood(Permission.bluetoothAdvertise);
+      final androidInfo = await _deviceInfo.androidInfo;
+      final sdkInt = androidInfo.version.sdkInt;
+
+      final loc = await Permission.location.status;
+      final bool hasLoc = loc.isGranted || loc.isLimited;
+
+      if (sdkInt >= 31) {
+        final btStatuses = await Future.wait([
+          Permission.bluetoothScan.status,
+          Permission.bluetoothConnect.status,
+        ]);
+        return hasLoc && btStatuses.every((s) => s.isGranted || s.isLimited);
+      }
+      return hasLoc;
     }
 
     if (AppPlatform.isIOS) {
-      // Core requirement for iOS: Bluetooth
-      return isGood(Permission.bluetooth);
+      final statuses = await Future.wait([
+        Permission.bluetooth.status,
+        Permission.locationWhenInUse.status,
+      ]);
+      return statuses.every((s) => s.isGranted || s.isLimited);
     }
 
     return true;
   }
 
-  /// Specifically request background location if needed for persistent links.
+  /// 🛠️ NEW: Checks if hardware services (Bluetooth/GPS) are physically turned ON.
+  /// Useful for showing a "Please turn on Bluetooth" banner.
+  static Future<bool> areCoreServicesEnabled() async {
+    if (kIsWeb || !AppPlatform.isMobile) return true;
+
+    // Check Bluetooth radio status
+    final btService = await Permission.bluetooth.serviceStatus;
+    // Check Location radio status (Required for discovery)
+    final locService = await Permission.location.serviceStatus;
+
+    return btService.isEnabled && locService.isEnabled;
+  }
+
+  /// Sequentially requests background location (OS requirement).
   static Future<bool> requestBackgroundLocation() async {
-    if (AppPlatform.isIOS) {
-      final status = await Permission.locationAlways.request();
-      return status.isGranted;
+    if (!AppPlatform.isMobile) return true;
+
+    var foreground = await Permission.location.status;
+    if (!foreground.isGranted) {
+      foreground = await Permission.location.request();
     }
-    return true;
+
+    if (foreground.isGranted) {
+      final background = await Permission.locationAlways.request();
+      return background.isGranted;
+    }
+    return false;
   }
 
-  /// Opens the system settings page for the app so the user can manually
-  /// enable any denied permissions.
+  /// Specifically check for Photo library access (Image Drop feature).
+  static Future<bool> hasPhotoPermission() async {
+    if (!AppPlatform.isMobile) return true;
+
+    if (AppPlatform.isAndroid) {
+      final info = await _deviceInfo.androidInfo;
+      if (info.version.sdkInt >= 33) {
+        final status = await Permission.photos.status;
+        return status.isGranted || status.isLimited;
+      }
+      return await Permission.storage.isGranted;
+    }
+
+    final status = await Permission.photos.status;
+    return status.isGranted || status.isLimited;
+  }
+
   static Future<void> openSettings() async {
     await openAppSettings();
   }
