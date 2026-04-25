@@ -35,63 +35,76 @@ jobs:
         run: flutter pub run build_runner build --delete-conflicting-outputs
 
       # ──────────────────────────────────────────────────────────────────
-      # Patch old/abandoned packages that are missing `namespace` in their
-      # build.gradle. AGP 8+ (used by Flutter 3.27) requires every Android
-      # library module to declare a namespace. Old packages on pub.dev
-      # predate this requirement and were never updated.
+      # Patch legacy plugins in the pub cache.
+      # Problems fixed per plugin:
       #
-      # We patch the files directly in the pub cache — this is safe because
-      # the cache is local to this CI runner and thrown away after the job.
+      #   flutter_bluetooth_serial 0.4.0 (abandoned):
+      #     1. Missing `namespace`  → AGP 8+ rejects it
+      #     2. compileSdkVersion 30 → android:attr/lStar requires SDK 31+
       #
-      # Packages patched:
-      #   • flutter_bluetooth_serial 0.4.0 — abandoned, no namespace
+      # All other plugins are patched defensively for namespace only,
+      # in case their cached version also predates AGP 8.
       # ──────────────────────────────────────────────────────────────────
-      - name: 🔧 Patch legacy plugin namespaces for AGP 8+
+      - name: 🔧 Patch legacy plugin build.gradle files for AGP 8+
         run: |
           PUB_CACHE="${HOME}/.pub-cache/hosted/pub.dev"
 
+          # ── Helper: inject namespace if missing ───────────────────────
           patch_namespace() {
             local PACKAGE="$1"
             local NAMESPACE="$2"
-            local BUILD_GRADLE=$(find "$PUB_CACHE" -path "*/${PACKAGE}-*/android/build.gradle" | head -1)
+            local BUILD_GRADLE
+            BUILD_GRADLE=$(find "$PUB_CACHE" -path "*/${PACKAGE}-*/android/build.gradle" | head -1)
 
             if [ -z "$BUILD_GRADLE" ]; then
-              echo "⚠️  $PACKAGE: build.gradle not found in pub cache — skipping"
+              echo "⚠️  $PACKAGE: not found in pub cache — skipping"
               return
             fi
-
-            # Check if namespace is already set
             if grep -q "namespace" "$BUILD_GRADLE"; then
-              echo "✅ $PACKAGE: namespace already present — skipping"
-              return
+              echo "✅ $PACKAGE: namespace already present"
+            else
+              sed -i "s/^android {/android {\n    namespace '$NAMESPACE'/" "$BUILD_GRADLE"
+              echo "✅ $PACKAGE: namespace '$NAMESPACE' injected"
             fi
-
-            # Inject namespace into the android { } block
-            sed -i "s/^android {/android {\n    namespace '$NAMESPACE'/" "$BUILD_GRADLE"
-            echo "✅ $PACKAGE: namespace '$NAMESPACE' injected into $BUILD_GRADLE"
           }
 
-          # flutter_bluetooth_serial
-          patch_namespace "flutter_bluetooth_serial" "io.github.edufolly.flutterbluetoothserial"
+          # ── Helper: bump compileSdkVersion to 35 ─────────────────────
+          patch_compile_sdk() {
+            local PACKAGE="$1"
+            local BUILD_GRADLE
+            BUILD_GRADLE=$(find "$PUB_CACHE" -path "*/${PACKAGE}-*/android/build.gradle" | head -1)
 
-          # Patch any other packages that might hit the same issue
-          patch_namespace "flutter_blue_plus"        "com.boskokg.flutter_blue_plus"
-          patch_namespace "permission_handler_android" "com.baseflow.permissionhandler"
-          patch_namespace "image_picker_android"     "io.flutter.plugins.imagepicker"
-          patch_namespace "network_info_plus"        "dev.fluttercommunity.plus.network_info"
+            if [ -z "$BUILD_GRADLE" ]; then
+              echo "⚠️  $PACKAGE: not found in pub cache — skipping"
+              return
+            fi
+            # Replace compileSdkVersion XX or compileSdk = XX with 35
+            sed -i \
+              -e 's/compileSdkVersion [0-9]*/compileSdkVersion 35/' \
+              -e 's/compileSdk = [0-9]*/compileSdk = 35/' \
+              "$BUILD_GRADLE"
+            echo "✅ $PACKAGE: compileSdk bumped to 35"
+          }
 
-      # ──────────────────────────────────────────────────────────────────
-      # Build APK
-      # ──────────────────────────────────────────────────────────────────
+          # ── flutter_bluetooth_serial: namespace + compileSdk fix ───────
+          patch_namespace   "flutter_bluetooth_serial" "io.github.edufolly.flutterbluetoothserial"
+          patch_compile_sdk "flutter_bluetooth_serial"
+
+          # ── Other plugins: namespace only (defensive) ─────────────────
+          patch_namespace "flutter_blue_plus"           "com.boskokg.flutter_blue_plus"
+          patch_namespace "permission_handler_android"  "com.baseflow.permissionhandler"
+          patch_namespace "image_picker_android"        "io.flutter.plugins.imagepicker"
+          patch_namespace "network_info_plus"           "dev.fluttercommunity.plus.network_info"
+          patch_namespace "device_info_plus"            "dev.fluttercommunity.plus.device_info"
+          patch_namespace "path_provider_android"       "io.flutter.plugins.pathprovider"
+          patch_namespace "shared_preferences_android"  "io.flutter.plugins.sharedpreferences"
+
       - name: 🏗️ Build release APK
         run: |
           flutter build apk --release \
             --build-number=${{ github.run_number }} \
             --build-name=1.1.${{ github.run_number }}
 
-      # ──────────────────────────────────────────────────────────────────
-      # Build AAB (Play Store format)
-      # ──────────────────────────────────────────────────────────────────
       - name: 🏗️ Build release AAB (Play Store)
         run: |
           flutter build appbundle --release \
@@ -101,13 +114,8 @@ jobs:
       - name: 📋 Rename build artifacts
         run: |
           VERSION="1.1.${{ github.run_number }}"
-
-          cp build/app/outputs/flutter-apk/app-release.apk \
-             BT-SecureChat-v${VERSION}.apk
-
-          cp build/app/outputs/bundle/release/app-release.aab \
-             BT-SecureChat-v${VERSION}.aab
-
+          cp build/app/outputs/flutter-apk/app-release.apk   BT-SecureChat-v${VERSION}.apk
+          cp build/app/outputs/bundle/release/app-release.aab BT-SecureChat-v${VERSION}.aab
           echo "✅ APK: $(du -sh BT-SecureChat-v${VERSION}.apk | cut -f1)"
           echo "✅ AAB: $(du -sh BT-SecureChat-v${VERSION}.aab | cut -f1)"
 
@@ -140,7 +148,7 @@ jobs:
             2. Download and open the `.apk`
 
             ### Requirements
-            - Android 6.0+ (API 21+)
+            - Android 5.0+ (API 21+)
             - Bluetooth LE support
 
       - name: 🚀 Upload AAB to GitHub Releases
