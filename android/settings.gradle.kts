@@ -19,7 +19,9 @@ pluginManagement {
 plugins {
     id("dev.flutter.flutter-plugin-loader") version "1.0.0"
     id("com.android.application") version "8.7.0" apply false
-    id("org.jetbrains.kotlin.android") version "1.8.22" apply false
+    // 2.2.0 — must match the kotlin-stdlib version Gradle resolves at runtime.
+    // Mismatching compiler vs stdlib versions causes "incompatible metadata" errors.
+    id("org.jetbrains.kotlin.android") version "2.2.0" apply false
 }
 
 include(":app")

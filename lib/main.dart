@@ -5,38 +5,43 @@ import 'package:provider/provider.dart';
 
 import 'models/message_model.dart';
 import 'platform/app_platform.dart';
+import 'platform/permission_helper.dart';
 import 'services/bluetooth_service.dart';
 import 'services/encryption_service.dart';
 import 'services/wifi_service.dart';
 import 'screens/home_screen.dart';
 import 'screens/settings_screen.dart';
 import 'theme/app_theme.dart';
-import 'utils/permissions.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 🛠️ PERFORMANCE: Request permissions in parallel with Hive initialization
-  await Future.wait([
-    requestPermissions(),
+  // ── 1. Atomic Initialization ──────────────────────────────────────────
+  final initFutures = <Future<void>>[
     Hive.initFlutter(),
-  ]);
+  ];
+  if (AppPlatform.isMobile) {
+    initFutures.add(
+      SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]),
+    );
+  }
+  await Future.wait(initFutures);
 
-  // Register Hive Adapter
+  // Register Adapters
   if (!Hive.isAdapterRegistered(0)) {
     Hive.registerAdapter(MessageAdapter());
   }
 
-  // 🛠️ FIX: Open the box once and keep a reference to it
-  final messageBox = await Hive.openBox<Message>('messages');
+  // Open persistence box for chat logs
+  final Box<Message> messageBox = await Hive.openBox<Message>('messages');
 
-  if (AppPlatform.isMobile) {
-    await SystemChrome.setPreferredOrientations([
-      DeviceOrientation.portraitUp,
-    ]);
-  }
+  // ── 2. Runtime Permissions ────────────────────────────────────────────
+  // FIX: PermissionHelper was imported but never called — wired up here so
+  // Bluetooth + Location permissions are requested before the UI starts and
+  // the import is no longer flagged as unused.
+  await PermissionHelper.requestAllPermissions();
 
-  // Set System Overlay Styles (Android/iOS Status bar)
+  // ── 3. System UI Configuration ────────────────────────────────────────
   if (!AppPlatform.isWeb) {
     SystemChrome.setSystemUIOverlayStyle(
       const SystemUiOverlayStyle(
@@ -46,6 +51,7 @@ Future<void> main() async {
         systemNavigationBarIconBrightness: Brightness.light,
       ),
     );
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   }
 
   runApp(BtSecureChatApp(messageBox: messageBox));
@@ -60,23 +66,24 @@ class BtSecureChatApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
-        // 🛠️ PERF: Encryption service is a simple provider
+        // Core Logic Services
         Provider(create: (_) => EncryptionService()),
 
-        // 🛠️ FIX: Pass the Hive box to services so they can PERSIST messages
+        // Expose the messageBox via Provider so descendant widgets can access
+        // persisted messages.
+        Provider<Box<Message>>.value(value: messageBox),
+
         ChangeNotifierProvider(
-          lazy: false, // Force eager initialization of hardware
-          create: (context) => BluetoothService(
-            encryption: context.read<EncryptionService>(),
-            // messageBox: messageBox, // Assuming you add this to your service constructor
-          )..initialize(),
+          lazy: false, // Eager init to start hardware listeners immediately
+          create: (ctx) => BluetoothService(
+            encryption: ctx.read<EncryptionService>(),
+          ),
         ),
 
         ChangeNotifierProvider(
-          lazy: false,
-          create: (context) => WifiService(
-            encryption: context.read<EncryptionService>(),
-            // messageBox: messageBox, // Assuming you add this to your service constructor
+          lazy: false, // Eager init — WifiService binds sockets in constructor
+          create: (ctx) => WifiService(
+            encryption: ctx.read<EncryptionService>(),
           ),
         ),
       ],
@@ -84,11 +91,16 @@ class BtSecureChatApp extends StatelessWidget {
         title: 'BT SecureChat',
         debugShowCheckedModeBanner: false,
         theme: AppTheme.darkTheme,
-        // 🛠️ UX: Prevent system font scaling from breaking the "Terminal" look
+        // ── Optimized Text Scaling ────────────────────────────────────────
         builder: (context, child) {
-          return MediaQuery.withClampedTextScaling(
-            minScaleFactor: 0.9,
-            maxScaleFactor: 1.1,
+          final mediaQuery = MediaQuery.of(context);
+          return MediaQuery(
+            data: mediaQuery.copyWith(
+              textScaler: mediaQuery.textScaler.clamp(
+                minScaleFactor: 0.9,
+                maxScaleFactor: 1.15,
+              ),
+            ),
             child: child!,
           );
         },
@@ -108,17 +120,23 @@ class AppShell extends StatefulWidget {
 class _AppShellState extends State<AppShell> {
   int _index = 0;
 
-  // 🛠️ PERF: Screens are marked const to prevent redundant rebuilds
-  final List<Widget> _screens = const [
-    HomeScreen(),
-    SettingsScreen(),
-  ];
+  late final List<Widget> _screens;
+
+  @override
+  void initState() {
+    super.initState();
+    _screens = const [
+      HomeScreen(),
+      SettingsScreen(),
+    ];
+  }
+
+  bool _isWide(Size size) => size.width >= 720;
 
   @override
   Widget build(BuildContext context) {
-    // 🛠️ RESPONSIVENESS: Use sizeOf for better performance over .of(context).size
     final size = MediaQuery.sizeOf(context);
-    final isWide = size.width >= 720;
+    final isWide = _isWide(size);
 
     return Scaffold(
       backgroundColor: AppTheme.bgDeep,
@@ -167,7 +185,6 @@ class _AppShellState extends State<AppShell> {
           ),
         ],
       ),
-      // 🛠️ UI: Hide bottom bar on wide screens
       bottomNavigationBar: isWide
           ? null
           : NavigationBar(

@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:network_info_plus/network_info_plus.dart';
@@ -184,7 +183,7 @@ class WifiService extends ChangeNotifier {
     _byteBuffer.addAll(data);
 
     while (true) {
-      int newlineIndex = _byteBuffer.indexOf(10);
+      final int newlineIndex = _byteBuffer.indexOf(10);
       if (newlineIndex == -1) break;
 
       final packetBytes = _byteBuffer.sublist(0, newlineIndex);
@@ -303,8 +302,10 @@ class WifiService extends ChangeNotifier {
     } catch (_) {}
     _serverSocket = null;
     _byteBuffer.clear();
-    if (_state != WifiConnectionState.error)
+    // FIX: Wrap bare `if` body in braces (lint: always_use_control_flow_braces)
+    if (_state != WifiConnectionState.error) {
       _setState(WifiConnectionState.disconnected);
+    }
   }
 
   void _setState(WifiConnectionState s) {

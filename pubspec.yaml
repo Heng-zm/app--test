@@ -46,7 +46,15 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^4.0.0
+
+  # FIX: Downgraded flutter_lints 4.x → 3.x.
+  # flutter_lints 4.x pulls lints 4.0.0 which adds `no_wildcard_variable_uses`
+  # (requires Dart >=3.3). Our SDK constraint is >=3.0.0, so the analyzer
+  # warns that the rule is unrecognised. flutter_lints 3.x pulls lints 3.x
+  # which is fully compatible with Dart >=3.0.0 and does not include that rule.
+  # Bump back to ^4.0.0 when the SDK floor is raised to >=3.3.
+  flutter_lints: ^3.0.0
+
   hive_generator: ^2.0.1
   build_runner: ^2.4.9
   bdd_widget_test: ^1.2.1

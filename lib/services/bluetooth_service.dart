@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart' as fbp;
 import 'package:rxdart/rxdart.dart';
@@ -13,7 +14,7 @@ import '../models/device_model.dart';
 import 'bluetooth_classic_stub.dart'
     if (dart.library.io) 'bluetooth_classic_android.dart';
 
-// Nordic UART UUIDs
+// Nordic UART UUIDs (Standard for Serial-over-BLE)
 const String _kServiceUuid = '6E400001-B5A3-F393-E0A9-E50E24DCCA9E';
 const String _kTxUuid = '6E400003-B5A3-F393-E0A9-E50E24DCCA9E';
 const String _kRxUuid = '6E400002-B5A3-F393-E0A9-E50E24DCCA9E';
@@ -32,7 +33,7 @@ class BluetoothService extends ChangeNotifier {
   StreamSubscription? _bleScanSub;
   StreamSubscription? _bleStateSub;
   StreamSubscription? _isScanningSub;
-  StreamSubscription? _discoverySub; // Added cleanup
+  StreamSubscription? _discoverySub;
 
   BtConnectionState _state = BtConnectionState.disconnected;
   final List<BTDevice> _pairedDevices = [];
@@ -60,7 +61,7 @@ class BluetoothService extends ChangeNotifier {
         .listen(_addOrUpdateDiscoveredBatch);
   }
 
-  // ── Added Missing Methods ───────────────────────────────
+  // ── Initialization ──────────────────────────────────────
 
   Future<void> initialize() async {
     if (kIsWeb) return;
@@ -96,6 +97,7 @@ class BluetoothService extends ChangeNotifier {
   String? get errorMessage => _errorMessage;
 
   // ── Discovery ───────────────────────────────────────────
+
   Future<void> startDiscovery() async {
     if (kIsWeb) return;
     if (_isDiscovering) await stopDiscovery();
@@ -123,7 +125,7 @@ class BluetoothService extends ChangeNotifier {
                   ? r.device.platformName
                   : 'Unknown',
               address: r.device.remoteId.str,
-              type: 'BLE',
+              type: BTType.ble,
               rssi: r.rssi,
               isBLE: true,
             ));
@@ -156,6 +158,7 @@ class BluetoothService extends ChangeNotifier {
   }
 
   // ── Connection Logic ────────────────────────────────────
+
   Future<void> connectToDevice(BTDevice device) async {
     if (kIsWeb || _state == BtConnectionState.connecting) return;
     await stopDiscovery();
@@ -174,6 +177,13 @@ class BluetoothService extends ChangeNotifier {
         _bleDevice = fbp.BluetoothDevice.fromId(device.address);
         await _bleDevice!.connect(timeout: const Duration(seconds: 10));
 
+        // Negotiate MTU for faster image transfers
+        if (AppPlatform.isAndroid) {
+          try {
+            await _bleDevice!.requestMtu(512);
+          } catch (_) {}
+        }
+
         final services = await _bleDevice!.discoverServices();
         fbp.BluetoothCharacteristic? rx;
         fbp.BluetoothCharacteristic? tx;
@@ -187,7 +197,7 @@ class BluetoothService extends ChangeNotifier {
           }
         }
 
-        if (rx == null || tx == null) throw Exception();
+        if (rx == null || tx == null) throw Exception('No serial service');
 
         await tx.setNotifyValue(true);
         _bleNotifySub = tx.onValueReceived.listen(_onRawData);
@@ -203,60 +213,120 @@ class BluetoothService extends ChangeNotifier {
   }
 
   // ── Messaging ───────────────────────────────────────────
+
   void _onRawData(List<int> data) {
+    // Safety: prevent buffer overflow from malformed data
+    if (_byteBuffer.length > 5 * 1024 * 1024) _byteBuffer.clear();
+
     _byteBuffer.addAll(data);
     while (true) {
-      int idx = _byteBuffer.indexOf(10);
+      final int idx = _byteBuffer.indexOf(10);
       if (idx == -1) break;
-      final line =
-          utf8.decode(_byteBuffer.sublist(0, idx), allowMalformed: true).trim();
+
+      final packetBytes = _byteBuffer.sublist(0, idx);
       _byteBuffer.removeRange(0, idx + 1);
-      if (line.isNotEmpty) _processPacket(line);
+
+      if (packetBytes.isEmpty) continue;
+
+      final line = utf8.decode(packetBytes, allowMalformed: true).trim();
+
+      // Offload heavy processing (images) to background isolate
+      if (line.length > 5000) {
+        _processPacketInBg(line);
+      } else {
+        _processPacketSync(line);
+      }
     }
   }
 
-  void _processPacket(String line) {
+  void _processPacketSync(String line) {
+    final msg = _parseAndDecrypt(
+        {'line': line, 'encryption': _encryption, 'uuid': _uuid.v4()});
+    if (msg != null) {
+      _messages.add(msg);
+      _notify();
+    }
+  }
+
+  Future<void> _processPacketInBg(String line) async {
     try {
+      final Message? msg = await compute(_parseAndDecrypt, {
+        'line': line,
+        'encryption': _encryption,
+        'uuid': _uuid.v4(),
+      });
+      if (msg != null && !_disposed) {
+        _messages.add(msg);
+        _notify();
+      }
+    } catch (_) {}
+  }
+
+  static Message? _parseAndDecrypt(Map<String, dynamic> args) {
+    try {
+      final String line = args['line'];
+      final EncryptionService encryption = args['encryption'];
       final json = jsonDecode(line);
-      final plain = _encryption.decrypt(json['t']);
-      _messages.add(Message(
-        id: _uuid.v4(),
+      final plain = encryption.decrypt(json['t'] as String);
+
+      return Message(
+        id: args['uuid'],
         text: plain,
         encryptedText: json['t'],
         isMine: false,
         timestamp: DateTime.now(),
         isImage: json['type'] == 'image',
-      ));
-      _notify();
-    } catch (_) {}
+      );
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<void> sendMessage(String text) async {
-    if (!isConnected) return;
     final enc = _encryption.encrypt(text.trim());
-    final packet = utf8.encode('${jsonEncode({'type': 'text', 't': enc})}\n');
+    await _sendRawData({'type': 'text', 't': enc}, text.trim(), false);
+  }
+
+  Future<void> sendImage(Uint8List imageBytes) async {
+    final base64String = base64Encode(imageBytes);
+    final enc = _encryption.encrypt(base64String);
+    await _sendRawData({'type': 'image', 't': enc}, base64String, true);
+  }
+
+  Future<void> _sendRawData(
+      Map<String, String> data, String rawText, bool isImage) async {
+    if (!isConnected) return;
+
+    final packet = utf8.encode('${jsonEncode(data)}\n');
+
     try {
       if (_classic != null && _classic!.isConnected) {
         await _classic!.send(Uint8List.fromList(packet));
       } else if (_bleRx != null) {
+        // MTU slicing for BLE
         final mtu = (_bleDevice?.mtuNow ?? 23) - 3;
         for (var i = 0; i < packet.length; i += mtu) {
           final end = (i + mtu < packet.length) ? i + mtu : packet.length;
           await _bleRx!.write(packet.sublist(i, end), withoutResponse: true);
         }
       }
+
       _messages.add(Message(
         id: _uuid.v4(),
-        text: text.trim(),
-        encryptedText: enc,
+        text: rawText,
+        encryptedText: isImage ? 'Image Data' : data['t']!,
         isMine: true,
         timestamp: DateTime.now(),
+        isImage: isImage,
       ));
       _notify();
-    } catch (_) {}
+    } catch (_) {
+      _setError('Transmission Failed');
+    }
   }
 
   // ── Lifecycle ───────────────────────────────────────────
+
   Future<void> stopDiscovery() async {
     _isDiscovering = false;
     await _bleScanSub?.cancel();
@@ -270,6 +340,7 @@ class BluetoothService extends ChangeNotifier {
     await _isScanningSub?.cancel();
     if (_bleDevice != null) await _bleDevice!.disconnect();
     if (_classic != null) await _classic!.disconnect();
+
     _bleDevice = null;
     _bleRx = null;
     _byteBuffer.clear();

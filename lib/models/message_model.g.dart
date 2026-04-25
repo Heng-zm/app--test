@@ -22,16 +22,16 @@ class MessageAdapter extends TypeAdapter<Message> {
       encryptedText: fields[2] as String,
       isMine: fields[3] as bool,
       timestamp: fields[4] as DateTime,
-      // Fallback to false if reading from an older database version
-      // where field 5 did not exist yet.
-      isDecryptionError: fields[5] as bool? ?? false,
+      // FIX: Safe casting with fallback for schema migration
+      isDecryptionError: fields[5] == null ? false : fields[5] as bool,
     );
   }
 
   @override
   void write(BinaryWriter writer, Message obj) {
     writer
-      ..writeByte(6) // Total number of fields saved
+      ..writeByte(
+          6) // Total count MUST match the number of writeByte() calls below
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)

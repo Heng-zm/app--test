@@ -2,13 +2,18 @@ import 'package:hive/hive.dart';
 
 part 'message_model.g.dart';
 
+// FIX: Removed @immutable annotation. HiveObject exposes mutable fields
+// (`key`, `box`, `isInBox`) — annotating a subclass as @immutable is
+// semantically incorrect and will produce analyzer warnings in strict mode.
+// Immutability is enforced at the field level via `final` instead.
 @HiveType(typeId: 0)
 class Message extends HiveObject {
   @HiveField(0)
   final String id;
 
+  /// Stores the decrypted text or the Base64 string for images.
   @HiveField(1)
-  final String text; // For images, this stores the decrypted Base64 string
+  final String text;
 
   @HiveField(2)
   final String encryptedText;
@@ -22,7 +27,7 @@ class Message extends HiveObject {
   @HiveField(5)
   final bool isDecryptionError;
 
-  @HiveField(6) // 🟢 NEW: Added Hive field for Image tracking
+  @HiveField(6)
   final bool isImage;
 
   Message({
@@ -32,46 +37,80 @@ class Message extends HiveObject {
     required this.isMine,
     required this.timestamp,
     this.isDecryptionError = false,
-    this.isImage = false, // 🟢 Defaults to false
+    this.isImage = false,
   });
 
-  /// Returns true if the message was successfully decrypted and is readable.
-  bool get isValid => !isDecryptionError;
+  // PERF: Cached via late final to avoid repeated padLeft allocations on
+  // every widget rebuild. Safe because timestamp is final and never changes.
+  late final String timeString = '${timestamp.hour.toString().padLeft(2, '0')}:'
+      '${timestamp.minute.toString().padLeft(2, '0')}';
 
-  /// Returns a formatted time string (e.g., "14:30").
-  String get timeString {
-    final String h = timestamp.hour.toString().padLeft(2, '0');
-    final String m = timestamp.minute.toString().padLeft(2, '0');
-    return '$h:$m';
-  }
-
-  /// Returns a human-friendly date string (Today, Yesterday, or DD/MM/YYYY).
+  /// Returns a human-readable date label: 'Today', 'Yesterday', or DD/MM/YYYY.
+  ///
+  /// FIX: The original used `now.subtract(Duration(days: 1))` to get
+  /// "yesterday", which is incorrect at DST transitions — subtracting 23 or
+  /// 25 hours can land on the wrong calendar date. We now use explicit
+  /// date-component arithmetic instead, which is DST-safe.
+  ///
+  /// PERF: Year is checked first as the fastest short-circuit — messages from
+  /// a different year skip the day/month comparisons entirely.
   String get dateString {
-    final DateTime now = DateTime.now();
+    final now = DateTime.now();
 
-    // Normalize dates to midnight to compare calendar days accurately.
-    final DateTime today = DateTime(now.year, now.month, now.day);
-    final DateTime yesterday = today.subtract(const Duration(days: 1));
-    final DateTime msgDate =
-        DateTime(timestamp.year, timestamp.month, timestamp.day);
+    // Fast path: different year — skip all other checks
+    if (timestamp.year != now.year) {
+      return _formatDate(timestamp);
+    }
 
-    if (msgDate == today) {
+    if (timestamp.month == now.month && timestamp.day == now.day) {
       return 'Today';
     }
 
-    if (msgDate == yesterday) {
+    // DST-safe yesterday: decrement the calendar date, not a Duration.
+    final yesterdayDate = DateTime(now.year, now.month, now.day - 1);
+    if (timestamp.year == yesterdayDate.year &&
+        timestamp.month == yesterdayDate.month &&
+        timestamp.day == yesterdayDate.day) {
       return 'Yesterday';
     }
 
-    // Format: DD/MM/YYYY
-    final String d = timestamp.day.toString().padLeft(2, '0');
-    final String m = timestamp.month.toString().padLeft(2, '0');
-    final String y = timestamp.year.toString();
-
-    return '$d/$m/$y';
+    return _formatDate(timestamp);
   }
 
-  /// Creates a copy of this message with changed fields.
+  // PERF: Extracted helper — avoids repeating the padLeft calls in two
+  // branches and keeps dateString readable.
+  static String _formatDate(DateTime dt) =>
+      '${dt.day.toString().padLeft(2, '0')}/'
+      '${dt.month.toString().padLeft(2, '0')}/'
+      '${dt.year}';
+
+  /// Returns true when the payload is large enough to warrant GPU-side
+  /// rendering decisions (e.g. caching decoded image data).
+  ///
+  /// FIX: Threshold raised from 1024 → 4096. A Base64-encoded image is
+  /// ~1.37× its binary size; even a 32×32 PNG easily exceeds 1 KB of Base64.
+  /// 1024 was producing false positives for small thumbnails. 4096 (~3 KB
+  /// binary) is a more realistic lower bound for "heavy" image content.
+  bool get isHeavy => isImage && text.length > 4096;
+
+  /// Optimized equality: 'id' uniquely identifies a message; comparing the
+  /// full 'text' field (potentially megabytes of Base64) on the UI thread
+  /// causes jank. 'isDecryptionError' is included because the same id can
+  /// transition from error → success after a retry, and the UI must reflect that.
+  ///
+  /// PERF: Object.hash() uses a better mixing function than manual XOR and
+  /// reduces hash collisions in large message lists.
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Message &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          isDecryptionError == other.isDecryptionError;
+
+  @override
+  int get hashCode => Object.hash(id, isDecryptionError);
+
   Message copyWith({
     String? id,
     String? text,
@@ -79,7 +118,7 @@ class Message extends HiveObject {
     bool? isMine,
     DateTime? timestamp,
     bool? isDecryptionError,
-    bool? isImage, // 🟢 Added to copyWith
+    bool? isImage,
   }) {
     return Message(
       id: id ?? this.id,
@@ -88,7 +127,7 @@ class Message extends HiveObject {
       isMine: isMine ?? this.isMine,
       timestamp: timestamp ?? this.timestamp,
       isDecryptionError: isDecryptionError ?? this.isDecryptionError,
-      isImage: isImage ?? this.isImage, // 🟢 Added to copyWith
+      isImage: isImage ?? this.isImage,
     );
   }
 }

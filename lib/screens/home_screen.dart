@@ -546,7 +546,8 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                           if (device.rssi != null) ...[
                             const SizedBox(width: 8),
-                            BTSignalBars(bars: device.signalBars),
+                            BTSignalBars(
+                                bars: device.signalInfo.bars), // ✅ Fixed
                           ],
                         ],
                       ),

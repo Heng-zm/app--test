@@ -2,40 +2,44 @@ import 'package:flutter/foundation.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'app_platform.dart';
 
-// ✅ Conditional import: Uses real package on mobile, and your stub on web.
 import 'package:permission_handler/permission_handler.dart'
-    if (dart.library.html) 'permission_handler_web_stub.dart';
+    if (dart.library.html) 'package:bluetooth_chat/platform/permission_handler_web_stub.dart';
 
 class PermissionHelper {
   PermissionHelper._();
 
-  static final DeviceInfoPlugin _deviceInfo = DeviceInfoPlugin();
+  // PERF: Module-level singleton — DeviceInfoPlugin is stateless and safe to
+  // reuse. Avoids re-instantiation on every static method call.
+  // FIX: `const` → `final`: DeviceInfoPlugin() has no const constructor.
+  static final _deviceInfo = DeviceInfoPlugin();
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Public API
+  // ─────────────────────────────────────────────────────────────────────────
 
   /// Requests all necessary permissions for the app in a single batch.
+  ///
+  /// Returns `true` if every core permission is satisfied after the request.
   static Future<bool> requestAllPermissions() async {
     if (!AppPlatform.needsRuntimePermissions) return true;
 
+    final int sdkInt = await _getAndroidSdk();
     final List<Permission> permissionsToRequest = [];
-
-    // 🛠️ PERF: Cache SDK version once per request cycle
-    int sdkInt = 0;
-    if (AppPlatform.isAndroid) {
-      final androidInfo = await _deviceInfo.androidInfo;
-      sdkInt = androidInfo.version.sdkInt;
-    }
 
     // ── 1. Connectivity (Bluetooth & Location) ───────────────────────────
     if (AppPlatform.isAndroid) {
-      // network_info_plus (v7/v8) requires Location to see SSID on all versions
       permissionsToRequest.add(Permission.location);
 
       if (sdkInt >= 31) {
-        // Android 12+ specific BT permissions
         permissionsToRequest.addAll([
           Permission.bluetoothScan,
           Permission.bluetoothConnect,
           Permission.bluetoothAdvertise,
         ]);
+      }
+
+      if (sdkInt >= 33) {
+        permissionsToRequest.add(Permission.notification);
       }
     } else if (AppPlatform.isIOS) {
       permissionsToRequest.addAll([
@@ -44,7 +48,7 @@ class PermissionHelper {
       ]);
     }
 
-    // ── 2. Hardware & Media (Camera, Mic, Photos) ────────────────────────
+    // ── 2. Hardware & Media ──────────────────────────────────────────────
     permissionsToRequest.addAll([
       Permission.camera,
       Permission.microphone,
@@ -52,11 +56,7 @@ class PermissionHelper {
 
     if (AppPlatform.isAndroid) {
       if (sdkInt >= 33) {
-        permissionsToRequest.addAll([
-          Permission.photos,
-          Permission.videos,
-          Permission.notification,
-        ]);
+        permissionsToRequest.addAll([Permission.photos, Permission.videos]);
       } else {
         permissionsToRequest.add(Permission.storage);
       }
@@ -64,42 +64,119 @@ class PermissionHelper {
       permissionsToRequest.add(Permission.photos);
     }
 
-    // ── 3. Performance Check: Filter out already granted permissions ──────
+    // ── 3. Batch Status Check ────────────────────────────────────────────
     final statuses =
         await Future.wait(permissionsToRequest.map((p) => p.status));
-    final List<Permission> actuallyNeeded = [];
 
-    for (int i = 0; i < permissionsToRequest.length; i++) {
-      final status = statuses[i];
-      // Note: We treat 'limited' (iOS) as granted.
-      if (!status.isGranted && !status.isLimited) {
-        actuallyNeeded.add(permissionsToRequest[i]);
-      }
-    }
+    final List<Permission> actuallyNeeded = [
+      for (int i = 0; i < permissionsToRequest.length; i++)
+        if (!statuses[i].isGranted && !statuses[i].isLimited)
+          permissionsToRequest[i],
+    ];
 
-    if (actuallyNeeded.isEmpty) return _validateCorePermissions();
+    if (actuallyNeeded.isEmpty) return _validateCorePermissions(sdkInt);
 
+    // ── 4. Request & Inspect Results ─────────────────────────────────────
     try {
-      await actuallyNeeded.request();
+      final results = await actuallyNeeded.request();
+      final denied = results.entries
+          .where((e) => e.value.isPermanentlyDenied)
+          .map((e) => e.key.toString())
+          .toList();
+      if (denied.isNotEmpty) {
+        debugPrint('[Permissions] Permanently denied: $denied '
+            '— user must grant via app settings.');
+      }
     } catch (e) {
-      debugPrint('[Permissions] Request Batch Error: $e');
+      debugPrint('[Permissions] Request batch error: $e');
     }
 
-    return _validateCorePermissions();
+    return _validateCorePermissions(sdkInt);
   }
 
-  /// Validates core connectivity requirements based on OS version.
-  static Future<bool> _validateCorePermissions() async {
+  /// Returns `true` if all core permissions are currently satisfied without
+  /// triggering any prompts. Useful for resume / foreground checks.
+  static Future<bool> corePermissionsGranted() =>
+      _validateCorePermissions(null);
+
+  /// Checks whether core hardware services (Bluetooth, Location) are enabled
+  /// at the OS level — distinct from whether permissions are granted.
+  static Future<bool> areCoreServicesEnabled() async {
+    if (kIsWeb || !AppPlatform.isMobile) return true;
+
+    if (AppPlatform.isAndroid) {
+      final results = await Future.wait([
+        Permission.bluetooth.serviceStatus,
+        Permission.location.serviceStatus,
+      ]);
+      return results.every((s) => s.isEnabled);
+    }
+
+    if (AppPlatform.isIOS) {
+      final locationService = await Permission.location.serviceStatus;
+      return locationService.isEnabled;
+    }
+
+    return true;
+  }
+
+  /// Requests background location, first ensuring foreground is granted.
+  static Future<bool> requestBackgroundLocation() async {
+    if (!AppPlatform.isMobile) return true;
+
+    final foregroundStatus = await Permission.location.status;
+
+    final bool hasForeground = foregroundStatus.isGranted
+        ? true
+        : (await Permission.location.request()).isGranted;
+
+    if (!hasForeground) {
+      debugPrint('[Permissions] Foreground location denied; '
+          'cannot request background.');
+      return false;
+    }
+
+    final background = await Permission.locationAlways.request();
+    return background.isGranted;
+  }
+
+  /// Returns `true` if the user has sufficient photo / storage access.
+  static Future<bool> hasPhotoPermission() async {
+    if (!AppPlatform.isMobile) return true;
+
+    if (AppPlatform.isAndroid) {
+      final int sdkInt = await _getAndroidSdk();
+      if (sdkInt >= 33) {
+        final statuses = await Future.wait([
+          Permission.photos.status,
+          Permission.videos.status,
+        ]);
+        return statuses.every((s) => s.isGranted || s.isLimited);
+      }
+      return Permission.storage.isGranted;
+    }
+
+    final status = await Permission.photos.status;
+    return status.isGranted || status.isLimited;
+  }
+
+  /// Opens the OS app-settings page so the user can manually grant
+  /// permissions that were permanently denied.
+  static Future<void> openSettings() => openAppSettings();
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Private helpers
+  // ─────────────────────────────────────────────────────────────────────────
+
+  static Future<bool> _validateCorePermissions(int? sdkInt) async {
     if (!AppPlatform.needsRuntimePermissions) return true;
 
     if (AppPlatform.isAndroid) {
-      final androidInfo = await _deviceInfo.androidInfo;
-      final sdkInt = androidInfo.version.sdkInt;
+      final int sdk = sdkInt ?? await _getAndroidSdk();
+      final locStatus = await Permission.location.status;
+      final bool hasLoc = locStatus.isGranted || locStatus.isLimited;
 
-      final loc = await Permission.location.status;
-      final bool hasLoc = loc.isGranted || loc.isLimited;
-
-      if (sdkInt >= 31) {
+      if (sdk >= 31) {
         final btStatuses = await Future.wait([
           Permission.bluetoothScan.status,
           Permission.bluetoothConnect.status,
@@ -120,53 +197,15 @@ class PermissionHelper {
     return true;
   }
 
-  /// 🛠️ NEW: Checks if hardware services (Bluetooth/GPS) are physically turned ON.
-  /// Useful for showing a "Please turn on Bluetooth" banner.
-  static Future<bool> areCoreServicesEnabled() async {
-    if (kIsWeb || !AppPlatform.isMobile) return true;
-
-    // Check Bluetooth radio status
-    final btService = await Permission.bluetooth.serviceStatus;
-    // Check Location radio status (Required for discovery)
-    final locService = await Permission.location.serviceStatus;
-
-    return btService.isEnabled && locService.isEnabled;
-  }
-
-  /// Sequentially requests background location (OS requirement).
-  static Future<bool> requestBackgroundLocation() async {
-    if (!AppPlatform.isMobile) return true;
-
-    var foreground = await Permission.location.status;
-    if (!foreground.isGranted) {
-      foreground = await Permission.location.request();
-    }
-
-    if (foreground.isGranted) {
-      final background = await Permission.locationAlways.request();
-      return background.isGranted;
-    }
-    return false;
-  }
-
-  /// Specifically check for Photo library access (Image Drop feature).
-  static Future<bool> hasPhotoPermission() async {
-    if (!AppPlatform.isMobile) return true;
-
-    if (AppPlatform.isAndroid) {
+  /// Returns the Android SDK integer, or `0` on non-Android or error.
+  static Future<int> _getAndroidSdk() async {
+    if (!AppPlatform.isAndroid) return 0;
+    try {
       final info = await _deviceInfo.androidInfo;
-      if (info.version.sdkInt >= 33) {
-        final status = await Permission.photos.status;
-        return status.isGranted || status.isLimited;
-      }
-      return await Permission.storage.isGranted;
+      return info.version.sdkInt;
+    } catch (e) {
+      debugPrint('[Permissions] Failed to read Android SDK version: $e');
+      return 0;
     }
-
-    final status = await Permission.photos.status;
-    return status.isGranted || status.isLimited;
-  }
-
-  static Future<void> openSettings() async {
-    await openAppSettings();
   }
 }

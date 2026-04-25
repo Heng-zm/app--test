@@ -1,17 +1,19 @@
+import 'package:flutter/foundation.dart';
+
+enum BTType { classic, ble, dual, unknown }
+
 /// Unified Bluetooth device model that bridges the gap between
 /// Bluetooth Classic (Android-only) and BLE (Cross-platform).
+@immutable
 class BTDevice {
   final String name;
 
-  /// MAC Address for Classic / UUID string for BLE on iOS/macOS.
+  /// Unique ID: MAC Address (Android) or UUID String (iOS/macOS).
   final String address;
 
-  /// 'Classic' | 'BLE' | 'Dual' | 'Unknown'
-  final String type;
+  final BTType type;
   final int? rssi;
   final bool isPaired;
-
-  /// Flag to identify if the device was found via flutter_blue_plus.
   final bool isBLE;
 
   const BTDevice({
@@ -23,68 +25,55 @@ class BTDevice {
     this.isBLE = false,
   });
 
-  /// Shortens long iOS/macOS UUIDs for cleaner UI presentation.
+  /// Shortens long iOS/macOS UUIDs or formats MAC addresses for cleaner UI.
   String get displayAddress {
     if (address.length > 17) {
-      return '${address.substring(0, 8)}…';
+      return '${address.substring(0, 8)}…${address.substring(address.length - 4)}';
     }
-    return address;
+    return address.toUpperCase();
   }
 
-  /// Returns a human-readable text description of signal quality.
-  String get signalLabel {
-    if (rssi == null) {
-      return 'Unknown';
-    }
-    if (rssi! >= -60) {
-      return 'Strong';
-    }
-    if (rssi! >= -70) {
-      return 'Good';
-    }
-    if (rssi! >= -80) {
-      return 'Fair';
-    }
-    return 'Weak';
+  /// 🛠️ PERF: Single-pass signal evaluation
+  /// Returns a record containing the label and bar count.
+  ({String label, int bars}) get signalInfo {
+    final val = rssi ?? -100;
+    if (val >= -60) return (label: 'Strong', bars: 4);
+    if (val >= -70) return (label: 'Good', bars: 3);
+    if (val >= -80) return (label: 'Fair', bars: 2);
+    if (val >= -90) return (label: 'Weak', bars: 1);
+    return (label: 'Unknown', bars: 0);
   }
 
-  /// Calculates the number of bars (1-4) for the signal indicator widget.
-  int get signalBars {
-    if (rssi == null) {
-      return 0;
-    }
-    if (rssi! >= -60) {
-      return 4;
-    }
-    if (rssi! >= -70) {
-      return 3;
-    }
-    if (rssi! >= -80) {
-      return 2;
-    }
-    return 1;
-  }
-
-  /// Returns a new instance with updated volatile fields (like RSSI).
+  /// Returns a new instance with updated fields.
   BTDevice copyWith({
+    String? name,
+    BTType? type,
     int? rssi,
     bool? isPaired,
   }) {
     return BTDevice(
-      name: name,
-      address: address,
-      type: type,
+      name: name ?? this.name,
+      address: address, // Address is immutable as it is the Unique ID
+      type: type ?? this.type,
       rssi: rssi ?? this.rssi,
       isPaired: isPaired ?? this.isPaired,
       isBLE: isBLE,
     );
   }
 
+  /// 🛠️ PERF: Using address as the unique identifier for list diffing.
   @override
-  bool operator ==(Object other) {
-    return other is BTDevice && other.address == address;
-  }
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BTDevice &&
+          runtimeType == other.runtimeType &&
+          address == other.address &&
+          rssi == other.rssi &&
+          isPaired == other.isPaired;
 
   @override
-  int get hashCode => address.hashCode;
+  int get hashCode => address.hashCode ^ rssi.hashCode ^ isPaired.hashCode;
+
+  @override
+  String toString() => 'BTDevice($name, $address, $type, RSSI: $rssi)';
 }

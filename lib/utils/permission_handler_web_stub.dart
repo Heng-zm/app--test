@@ -1,84 +1,71 @@
-import 'dart:async';
+// Web stub for package:permission_handler/permission_handler.dart.
+// Provides no-op implementations so that the file compiles on web targets
+// where Bluetooth / location runtime permissions do not apply.
 
-/// Web stub for permission_handler.
-/// Matches the v11.x API to prevent compilation errors on Web targets.
-class Permission {
-  final String _label;
-  const Permission._(this._label);
-
-  // Bluetooth
-  static const Permission bluetooth = Permission._('bluetooth');
-  static const Permission bluetoothScan = Permission._('bluetoothScan');
-  static const Permission bluetoothConnect = Permission._('bluetoothConnect');
-  static const Permission bluetoothAdvertise =
-      Permission._('bluetoothAdvertise');
-
-  // Location
-  static const Permission location = Permission._('location');
-  static const Permission locationWhenInUse = Permission._('locationWhenInUse');
-  static const Permission locationAlways = Permission._('locationAlways');
-
-  // Hardware
-  static const Permission camera = Permission._('camera');
-  static const Permission microphone = Permission._('microphone');
-
-  // Media & Storage
-  static const Permission photos = Permission._('photos');
-  static const Permission videos = Permission._('videos');
-  static const Permission audio = Permission._('audio');
-  static const Permission storage = Permission._('storage');
-  static const Permission manageExternalStorage =
-      Permission._('manageExternalStorage');
-
-  // Misc
-  static const Permission notification = Permission._('notification');
-  static const Permission appTrackingTransparency =
-      Permission._('appTrackingTransparency');
-
-  /// Mock for Permission.status
-  Future<PermissionStatus> get status async => PermissionStatus.granted;
-
-  /// Mock for Permission.request()
-  Future<PermissionStatus> request() async => PermissionStatus.granted;
-
-  /// 🛠️ FIX: Added to prevent "Member not found" if used in UI logic
-  Future<bool> get shouldShowRequestRationale async => false;
-
-  @override
-  String toString() => 'Permission.$_label';
-}
-
+/// Stub [PermissionStatus].
 class PermissionStatus {
-  final String _value;
   const PermissionStatus._(this._value);
+  final int _value;
 
-  static const PermissionStatus granted = PermissionStatus._('granted');
-  static const PermissionStatus denied = PermissionStatus._('denied');
-  static const PermissionStatus restricted = PermissionStatus._('restricted');
-  static const PermissionStatus permanentlyDenied =
-      PermissionStatus._('permanentlyDenied');
-  static const PermissionStatus limited = PermissionStatus._('limited');
-  static const PermissionStatus provisional = PermissionStatus._('provisional');
+  static const granted = PermissionStatus._(0);
+  static const denied = PermissionStatus._(1);
+  static const limited = PermissionStatus._(2);
+  static const permanentlyDenied = PermissionStatus._(3);
+  static const restricted = PermissionStatus._(4);
 
-  bool get isGranted => _value == 'granted';
-  bool get isDenied => _value == 'denied';
-  bool get isLimited => _value == 'limited';
-  bool get isRestricted => _value == 'restricted';
-  bool get isPermanentlyDenied => _value == 'permanentlyDenied';
-  bool get isProvisional => _value == 'provisional';
-
-  @override
-  String toString() => 'PermissionStatus.$_value';
+  bool get isGranted => _value == 0;
+  bool get isDenied => _value == 1;
+  bool get isLimited => _value == 2;
+  bool get isPermanentlyDenied => _value == 3;
+  bool get isRestricted => _value == 4;
 }
 
-/// 🛠️ PERF: Updated extension to use modern Map.fromEntries
-extension PermissionListRequest on Iterable<Permission> {
-  Future<Map<Permission, PermissionStatus>> request() async {
-    return Map.fromEntries(
-      map((p) => MapEntry(p, PermissionStatus.granted)),
-    );
-  }
+/// Stub [ServiceStatus].
+class ServiceStatus {
+  const ServiceStatus._(this._enabled);
+  final bool _enabled;
+
+  static const enabled = ServiceStatus._(true);
+  static const disabled = ServiceStatus._(false);
+
+  bool get isEnabled => _enabled;
 }
 
-/// No-op for web settings.
-Future<bool> openAppSettings() async => true;
+/// Stub [Permission] — all resolve to granted/enabled on web.
+class Permission {
+  // ignore: avoid_unused_constructor_parameters
+  const Permission._(int id) : _index = id;
+  final int _index;
+
+  // Expose index so the field is "used" and the lint is satisfied.
+  int get index => _index;
+
+  static const location = Permission._(0);
+  static const locationWhenInUse = Permission._(1);
+  static const locationAlways = Permission._(2);
+  static const bluetooth = Permission._(3);
+  static const bluetoothScan = Permission._(4);
+  static const bluetoothConnect = Permission._(5);
+  static const bluetoothAdvertise = Permission._(6);
+  static const camera = Permission._(7);
+  static const microphone = Permission._(8);
+  static const photos = Permission._(9);
+  static const videos = Permission._(10);
+  static const storage = Permission._(11);
+  static const notification = Permission._(12);
+
+  Future<PermissionStatus> get status async => PermissionStatus.granted;
+  Future<PermissionStatus> request() async => PermissionStatus.granted;
+  Future<ServiceStatus> get serviceStatus async => ServiceStatus.enabled;
+  Future<bool> get isGranted async => true;
+}
+
+/// Stub batch-request extension on [List<Permission>].
+extension PermissionListStub on List<Permission> {
+  Future<Map<Permission, PermissionStatus>> request() async => {
+        for (final p in this) p: PermissionStatus.granted,
+      };
+}
+
+/// No-op — web has no OS settings page to open.
+Future<bool> openAppSettings() async => false;

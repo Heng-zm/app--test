@@ -15,10 +15,10 @@ class PlatformBadge extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
         // Subtle background glow using the platform's signature color
-        color: platformColor.withOpacity(0.12),
+        color: platformColor.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(4),
         border: Border.all(
-          color: platformColor.withOpacity(0.4),
+          color: platformColor.withValues(alpha: 0.4),
           width: 1,
         ),
       ),
