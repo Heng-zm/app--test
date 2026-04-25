@@ -7,11 +7,10 @@ import '../theme/app_theme.dart';
 class WifiConnectionDialog extends StatefulWidget {
   const WifiConnectionDialog({super.key});
 
-  /// Static helper to launch the dialog.
   static void show(BuildContext context) {
     showDialog(
       context: context,
-      barrierDismissible: true, // Allow tapping outside to close
+      barrierDismissible: true,
       builder: (_) => const WifiConnectionDialog(),
     );
   }
@@ -32,14 +31,12 @@ class _WifiConnectionDialogState extends State<WifiConnectionDialog> {
 
   @override
   Widget build(BuildContext context) {
-    // 🛠️ PERF: Using select/watch specifically for the state to minimize rebuilds.
     final wifiService = context.watch<WifiService>();
     final size = MediaQuery.sizeOf(context);
 
     return Dialog(
       backgroundColor: Colors.transparent,
       insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-      // 🛠️ FIX: Wrap in a GestureDetector to unfocus when tapping outside text fields
       child: GestureDetector(
         onTap: () => FocusScope.of(context).unfocus(),
         child: Container(
@@ -69,8 +66,6 @@ class _WifiConnectionDialogState extends State<WifiConnectionDialog> {
                 padding: EdgeInsets.symmetric(vertical: 20),
                 child: Divider(color: AppTheme.borderGlow, height: 1),
               ),
-              // 🛠️ FIX: Flexible + SingleChildScrollView prevents "Bottom Overflow"
-              // when the manual IP keyboard is open.
               Flexible(
                 child: SingleChildScrollView(
                   physics: const BouncingScrollPhysics(),
@@ -132,8 +127,6 @@ class _WifiConnectionDialogState extends State<WifiConnectionDialog> {
         return _buildMenuView(wifiService);
     }
   }
-
-  // ── Sub-Views ────────────────────────────────────────────────────────────
 
   Widget _buildConnectedView(WifiService service) {
     return Column(
@@ -215,7 +208,7 @@ class _WifiConnectionDialogState extends State<WifiConnectionDialog> {
                   if (service.localIP == null) return;
                   await Clipboard.setData(
                       ClipboardData(text: service.localIP!));
-                  if (!mounted) return; // 🛠️ FIX: Async gap check
+                  if (!mounted) return;
                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                       content: Text('IP Copied to Clipboard'),
                       behavior: SnackBarBehavior.floating));
@@ -316,16 +309,15 @@ class _WifiConnectionDialogState extends State<WifiConnectionDialog> {
               label: 'LINK MANUALLY',
               color: AppTheme.textPrimary,
               onPressed: () {
-                if (_ipController.text.isNotEmpty)
+                if (_ipController.text.isNotEmpty) {
                   service.connectToHost(_ipController.text.trim());
+                }
               }),
         ],
         if (service.errorMessage != null) _buildErrorBox(service.errorMessage!),
       ],
     );
   }
-
-  // ── UI Helpers ───────────────────────────────────────────────────────────
 
   Widget _buildInfoBox() {
     return Container(
@@ -374,44 +366,49 @@ class _WifiConnectionDialogState extends State<WifiConnectionDialog> {
     );
   }
 
-  Widget _actionButton(
-      {required String label,
-      required Color color,
-      required VoidCallback onPressed,
-      IconData? icon,
-      bool outlined = false}) {
-    final style = outlined
-        ? OutlinedButton.styleFrom(
+  Widget _actionButton({
+    required String label,
+    required Color color,
+    required VoidCallback onPressed,
+    IconData? icon,
+    bool outlined = false,
+  }) {
+    final Widget labelWidget = Text(
+      label,
+      style: const TextStyle(
+          fontWeight: FontWeight.bold, fontSize: 12, letterSpacing: 1),
+    );
+    final Widget? iconWidget = icon != null ? Icon(icon, size: 18) : null;
+
+    if (outlined) {
+      return SizedBox(
+        width: double.infinity,
+        child: OutlinedButton.icon(
+          onPressed: onPressed,
+          icon: iconWidget ?? const SizedBox.shrink(),
+          label: labelWidget,
+          style: OutlinedButton.styleFrom(
             foregroundColor: color,
             side: BorderSide(color: color.withValues(alpha: 0.5)),
-            padding: const EdgeInsets.symmetric(vertical: 15))
-        : ElevatedButton.styleFrom(
-            backgroundColor: color,
-            foregroundColor: AppTheme.bgDeep,
             padding: const EdgeInsets.symmetric(vertical: 15),
-            elevation: 0);
+          ),
+        ),
+      );
+    }
 
     return SizedBox(
       width: double.infinity,
-      child: outlined
-          ? OutlinedButton.icon(
-              onPressed: onPressed,
-              icon:
-                  icon != null ? Icon(icon, size: 18) : const SizedBox.shrink(),
-              label: Text(label,
-                  style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 12,
-                      letterSpacing: 1)))
-          : ElevatedButton.icon(
-              onPressed: onPressed,
-              icon:
-                  icon != null ? Icon(icon, size: 18) : const SizedBox.shrink(),
-              label: Text(label,
-                  style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 12,
-                      letterSpacing: 1))),
+      child: ElevatedButton.icon(
+        onPressed: onPressed,
+        icon: iconWidget ?? const SizedBox.shrink(),
+        label: labelWidget,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: color,
+          foregroundColor: AppTheme.bgDeep,
+          padding: const EdgeInsets.symmetric(vertical: 15),
+          elevation: 0,
+        ),
+      ),
     );
   }
 }

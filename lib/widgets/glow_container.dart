@@ -15,11 +15,15 @@ class GlowContainer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 🛠️ PERF: Resolve the effective color once before rendering the shadow
+    final effectiveColor = glowColor ?? AppTheme.accentCyan;
+
     return Container(
       decoration: BoxDecoration(
         boxShadow: [
           BoxShadow(
-            color: (glowColor ?? AppTheme.accentCyan).withOpacity(0.15),
+            // 🛠️ FIX: Replaced deprecated .withOpacity with .withValues for Flutter 3.27+
+            color: effectiveColor.withValues(alpha: 0.15),
             blurRadius: blurRadius,
             spreadRadius: 0,
           ),
