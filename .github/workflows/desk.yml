@@ -22,8 +22,30 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: 🖥️ Enable Windows desktop support
-        run: flutter config --enable-windows-desktop
+      - name: 🖥️ Enable Windows desktop & create project
+        shell: pwsh
+        run: |
+          # Must enable BEFORE create/build
+          flutter config --enable-windows-desktop
+
+          # Verify config took effect
+          flutter config | Select-String "windows"
+
+          # Scaffold windows/ folder if not committed in repo
+          if (-Not (Test-Path "windows")) {
+            Write-Host "⚠️ windows/ not found — scaffolding now..."
+            flutter create --platforms=windows --project-name speedcharge .
+            Write-Host "✅ windows/ created."
+          } else {
+            Write-Host "✅ windows/ already present."
+          }
+
+          # Hard-fail if still missing after create
+          if (-Not (Test-Path "windows\CMakeLists.txt")) {
+            Write-Error "❌ windows/CMakeLists.txt still missing after flutter create!"
+            exit 1
+          }
+          Write-Host "✅ windows/CMakeLists.txt confirmed."
 
       - name: 📦 Install pub dependencies
         run: flutter pub get
@@ -33,28 +55,15 @@ jobs:
         run: |
           if (-Not (Test-Path "assets")) {
             New-Item -ItemType Directory -Path "assets" | Out-Null
-            # Flutter requires at least one file in the folder to resolve the entry
-            New-Item -ItemType File -Path "assets\.keep" | Out-Null
-            Write-Host "✅ Created empty assets/ folder."
-          } else {
-            Write-Host "✅ assets/ folder already exists."
-          }
-
-      - name: 🪟 Create Windows project (if missing)
-        shell: pwsh
-        run: |
-          if (-Not (Test-Path "windows")) {
-            Write-Host "⚠️  No windows/ folder found — creating it now..."
-            flutter create --platforms=windows .
-            Write-Host "✅ Windows project created."
-          } else {
-            Write-Host "✅ windows/ folder already exists, skipping."
+            New-Item -ItemType File    -Path "assets\.keep" | Out-Null
+            Write-Host "✅ Created assets/ placeholder."
           }
 
       - name: ⚙️ Run build_runner (Code Gen)
         run: dart run build_runner build --delete-conflicting-outputs
 
       - name: 🏗️ Build Windows app (Release)
+        shell: pwsh
         run: |
           flutter build windows --release `
             --build-number=${{ github.run_number }} `
@@ -64,19 +73,11 @@ jobs:
         shell: pwsh
         run: |
           $appPath = "build\windows\x64\runner\Release"
-
           if (-Not (Test-Path $appPath)) {
-            Write-Error "❌ Release folder not found at: $appPath"
+            Write-Error "❌ Release folder not found: $appPath"
             exit 1
           }
-
-          Write-Host "✅ Found Release folder at: $appPath"
-
-          Compress-Archive `
-            -Path "$appPath\*" `
-            -DestinationPath "SpeedCharge-Windows.zip" `
-            -Force
-
+          Compress-Archive -Path "$appPath\*" -DestinationPath "SpeedCharge-Windows.zip" -Force
           Write-Host "✅ SpeedCharge-Windows.zip created."
 
       - name: 🚀 Upload to GitHub Releases
@@ -95,10 +96,9 @@ jobs:
             **Flutter:** 3.27.4
 
             ### ℹ️ Installation
-            1. Download and extract the ZIP file
-            2. Run **SpeedCharge.exe** inside the extracted folder
-            3. No installation required — fully portable
+            1. Download and extract the ZIP
+            2. Run **SpeedCharge.exe** — no installer needed
 
             ### ⚠️ Requirements
-            - Windows 10 version 1903 or later (64-bit)
-            - Visual C++ Redistributable 2019+ (usually pre-installed)
+            - Windows 10 1903+ (64-bit)
+            - Visual C++ Redistributable 2019+
