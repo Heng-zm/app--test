@@ -22,27 +22,23 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: 🖥️ Enable Windows desktop & create project
+      - name: 🖥️ Enable Windows desktop & scaffold project
         shell: pwsh
         run: |
-          # Must enable BEFORE create/build
           flutter config --enable-windows-desktop
 
-          # Verify config took effect
-          flutter config | Select-String "windows"
-
-          # Scaffold windows/ folder if not committed in repo
-          if (-Not (Test-Path "windows")) {
-            Write-Host "⚠️ windows/ not found — scaffolding now..."
-            flutter create --platforms=windows --project-name speedcharge .
-            Write-Host "✅ windows/ created."
-          } else {
-            Write-Host "✅ windows/ already present."
+          # Always remove and regenerate windows/ to guarantee CMakeLists.txt is present
+          if (Test-Path "windows") {
+            Write-Host "🗑️ Removing existing incomplete windows/ folder..."
+            Remove-Item -Recurse -Force "windows"
           }
 
-          # Hard-fail if still missing after create
+          Write-Host "🔨 Scaffolding windows/ via flutter create..."
+          flutter create --platforms=windows --project-name speedcharge .
+
+          # Hard-fail if CMakeLists.txt is still missing
           if (-Not (Test-Path "windows\CMakeLists.txt")) {
-            Write-Error "❌ windows/CMakeLists.txt still missing after flutter create!"
+            Write-Error "❌ windows/CMakeLists.txt missing after flutter create — aborting."
             exit 1
           }
           Write-Host "✅ windows/CMakeLists.txt confirmed."
@@ -55,7 +51,7 @@ jobs:
         run: |
           if (-Not (Test-Path "assets")) {
             New-Item -ItemType Directory -Path "assets" | Out-Null
-            New-Item -ItemType File    -Path "assets\.keep" | Out-Null
+            New-Item -ItemType File -Path "assets\.keep" | Out-Null
             Write-Host "✅ Created assets/ placeholder."
           }
 
