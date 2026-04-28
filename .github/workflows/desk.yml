@@ -1,4 +1,4 @@
-name: Windows-exe-build
+name: SpeedCharge-Windows-Build
 
 on:
   workflow_dispatch:
@@ -8,19 +8,13 @@ permissions:
 
 jobs:
   build-windows:
-    name: 🪟 Windows Release Build
+    name: 🎉 Build SpeedCharge (Windows EXE)
     runs-on: windows-latest
 
     steps:
-      # 1. Checkout
       - name: 📥 Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Enable symlinks (important for Flutter plugins)
-      - name: 🔗 Enable Symlinks
-        run: git config --global core.symlinks true
-
-      # 3. Setup Flutter
       - name: 🛠️ Setup Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -28,82 +22,79 @@ jobs:
           channel: 'stable'
           cache: true
 
-      # 4. Enable Windows + get dependencies
-      - name: 📦 Install dependencies
+      - name: 🖥️ Enable Windows desktop & scaffold project
+        shell: pwsh
         run: |
           flutter config --enable-windows-desktop
-          flutter clean
-          flutter pub get
 
-      # 5. Run build_runner
-      - name: ⚙️ Code generation
-        run: flutter pub run build_runner build --delete-conflicting-outputs
-
-      # 6. Build Windows app
-      - name: 🏗️ Build Windows
-        run: flutter build windows --release
-
-      # 7. Find EXE
-      - name: 🔍 Locate EXE
-        shell: pwsh
-        run: |
-          $exe = Get-ChildItem -Recurse "build\windows" -Filter "*.exe" |
-                 Where-Object { $_.FullName -match "Release" } |
-                 Select-Object -First 1
-
-          if (!$exe) {
-            Write-Host "❌ EXE not found"
-            Get-ChildItem -Recurse "build\windows"
-            exit 1
+          # Always remove and regenerate windows/ to guarantee CMakeLists.txt is present
+          if (Test-Path "windows") {
+            Write-Host "🗑️ Removing existing incomplete windows/ folder..."
+            Remove-Item -Recurse -Force "windows"
           }
 
-          Write-Host "✅ Found EXE: $($exe.FullName)"
-          "RELEASE_DIR=$($exe.DirectoryName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "🔨 Scaffolding windows/ via flutter create..."
+          flutter create --platforms=windows --project-name speedcharge .
 
-      # 8. Install NSIS
-      - name: 📥 Install NSIS
-        run: choco install nsis --yes
+          # Hard-fail if CMakeLists.txt is still missing
+          if (-Not (Test-Path "windows\CMakeLists.txt")) {
+            Write-Error "❌ windows/CMakeLists.txt missing after flutter create — aborting."
+            exit 1
+          }
+          Write-Host "✅ windows/CMakeLists.txt confirmed."
 
-      # 9. Create installer
-      - name: 🔨 Build Installer
+      - name: 📦 Install pub dependencies
+        run: flutter pub get
+
+      - name: 📁 Ensure assets folder exists
         shell: pwsh
         run: |
-          $version = "1.1.${{ github.run_number }}"
-          $releaseDir = $env:RELEASE_DIR
+          if (-Not (Test-Path "assets")) {
+            New-Item -ItemType Directory -Path "assets" | Out-Null
+            New-Item -ItemType File -Path "assets\.keep" | Out-Null
+            Write-Host "✅ Created assets/ placeholder."
+          }
 
-          $script = @'
-          Unicode true
-          !define APP_NAME "BT SecureChat"
-          !define APP_VERSION "APPVER"
-          !define APP_EXE "bluetooth_chat.exe"
-          !define BUILD_DIR "BUILDDIR"
+      - name: ⚙️ Run build_runner (Code Gen)
+        run: dart run build_runner build --delete-conflicting-outputs
 
-          Name "${APP_NAME} ${APP_VERSION}"
-          OutFile "BT-SecureChat-Setup-v${APP_VERSION}.exe"
-          InstallDir "$PROGRAMFILES64\BT SecureChat"
-          RequestExecutionLevel admin
+      - name: 🏗️ Build Windows app (Release)
+        shell: pwsh
+        run: |
+          flutter build windows --release `
+            --build-number=${{ github.run_number }} `
+            --build-name=1.1.${{ github.run_number }}
 
-          Page directory
-          Page instfiles
+      - name: 📦 Package as ZIP
+        shell: pwsh
+        run: |
+          $appPath = "build\windows\x64\runner\Release"
+          if (-Not (Test-Path $appPath)) {
+            Write-Error "❌ Release folder not found: $appPath"
+            exit 1
+          }
+          Compress-Archive -Path "$appPath\*" -DestinationPath "SpeedCharge-Windows.zip" -Force
+          Write-Host "✅ SpeedCharge-Windows.zip created."
 
-          Section "Install"
-            SetOutPath "$INSTDIR"
-            File /r "${BUILD_DIR}\*.*"
-            CreateShortcut "$DESKTOP\BT SecureChat.lnk" "$INSTDIR\${APP_EXE}"
-          SectionEnd
-          '@
-
-          $script = $script -replace 'APPVER', $version -replace 'BUILDDIR', $releaseDir
-          $script | Out-File "installer.nsi" -Encoding UTF8
-
-          makensis installer.nsi
-
-      # 10. Upload release
-      - name: 🚀 Upload Release
+      - name: 🚀 Upload to GitHub Releases
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: BT-SecureChat-Setup-v*
-          file_glob: true
+          file: SpeedCharge-Windows.zip
+          asset_name: SpeedCharge-Windows-v1.1.${{ github.run_number }}.zip
           tag: v1.1.${{ github.run_number }}
           overwrite: true
+          body: |
+            ## ⚡ SpeedCharge — Build ${{ github.run_number }}
+
+            **Platform:** Windows (x64)
+            **Version:** 1.1.${{ github.run_number }}
+            **Flutter:** 3.27.4
+
+            ### ℹ️ Installation
+            1. Download and extract the ZIP
+            2. Run **SpeedCharge.exe** — no installer needed
+
+            ### ⚠️ Requirements
+            - Windows 10 1903+ (64-bit)
+            - Visual C++ Redistributable 2019+

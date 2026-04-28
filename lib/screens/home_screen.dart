@@ -4,7 +4,11 @@ import 'package:provider/provider.dart';
 import '../platform/app_platform.dart';
 import '../platform/permission_helper.dart';
 import '../services/bluetooth_service.dart';
+<<<<<<< HEAD
 import '../services/wifi_service.dart';
+=======
+import '../services/wifi_service.dart'; // 🟢 NEW: Imported WifiService
+>>>>>>> a53763d320be7b320454131c4120cbc49f48e947
 import '../models/device_model.dart';
 import '../theme/app_theme.dart';
 import '../widgets/bt_signal_bars.dart';
@@ -26,12 +30,20 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _permissionDenied = false;
   String? _bootError;
 
+<<<<<<< HEAD
+=======
+  // 🟢 NEW: Track Wi-Fi state for auto-navigation
+>>>>>>> a53763d320be7b320454131c4120cbc49f48e947
   late WifiService _wifiService;
   bool _wasWifiConnected = false;
 
   @override
   void initState() {
     super.initState();
+<<<<<<< HEAD
+=======
+    // Initialize Wi-Fi listener
+>>>>>>> a53763d320be7b320454131c4120cbc49f48e947
     _wifiService = context.read<WifiService>();
     _wifiService.addListener(_onWifiStateChanged);
 
@@ -44,12 +56,17 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
+<<<<<<< HEAD
   // 🟢 FIX: Safer navigation handling to prevent tearing down unintended routes
+=======
+  // 🟢 NEW: Auto-navigation logic when Wi-Fi links
+>>>>>>> a53763d320be7b320454131c4120cbc49f48e947
   void _onWifiStateChanged() {
     if (!mounted) return;
     final bool isConnected = _wifiService.isConnected;
     final bool isWide = MediaQuery.sizeOf(context).width >= 720;
 
+<<<<<<< HEAD
     if (isConnected && !_wasWifiConnected) {
       if (!isWide) {
         final nav = Navigator.of(context);
@@ -57,11 +74,25 @@ class _HomeScreenState extends State<HomeScreen> {
           nav.popUntil((route) => route.isFirst);
         }
         nav.push(
+=======
+    // Transitioned from disconnected to connected
+    if (isConnected && !_wasWifiConnected) {
+      if (!isWide) {
+        // Pop the dialog if it's open, ensuring a clean stack
+        Navigator.of(context).popUntil((route) => route.isFirst);
+        // Push the ChatScreen
+        Navigator.push(
+          context,
+>>>>>>> a53763d320be7b320454131c4120cbc49f48e947
           MaterialPageRoute(builder: (_) => const ChatScreen()),
         );
       }
     }
+<<<<<<< HEAD
 
+=======
+    
+>>>>>>> a53763d320be7b320454131c4120cbc49f48e947
     _wasWifiConnected = isConnected;
   }
 
@@ -126,6 +157,7 @@ class _HomeScreenState extends State<HomeScreen> {
               : _permissionDenied
                   ? _buildPermissionDenied()
                   : isWide
+<<<<<<< HEAD
                       ? _buildWideLayout(context, btService, wifiService)
                       : _buildNarrowLayout(context, btService, wifiService),
       floatingActionButton:
@@ -149,6 +181,36 @@ class _HomeScreenState extends State<HomeScreen> {
                     )
                   : null
               : null,
+=======
+                      ? _buildWideLayout(context)
+                      : _buildNarrowLayout(context),
+      // 🟢 NEW: Floating Resume Button if user pops out of Chat without disconnecting
+      floatingActionButton: _initialized && !_permissionDenied && _bootError == null && !isWide
+          ? Consumer2<BluetoothService, WifiService>(
+              builder: (context, bt, wifi, _) {
+                if (bt.isConnected || wifi.isConnected) {
+                  return FloatingActionButton.extended(
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const ChatScreen()),
+                    ),
+                    backgroundColor: AppTheme.accentGreen,
+                    icon: const Icon(Icons.chat, color: AppTheme.bgDeep),
+                    label: const Text(
+                      'RESUME SESSION',
+                      style: TextStyle(
+                        color: AppTheme.bgDeep,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 1,
+                      ),
+                    ),
+                  );
+                }
+                return const SizedBox.shrink();
+              },
+            )
+          : null,
+>>>>>>> a53763d320be7b320454131c4120cbc49f48e947
     );
   }
 
@@ -212,6 +274,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // ── Layouts ──────────────────────────────────────────────
 
+<<<<<<< HEAD
   Widget _buildNarrowLayout(
       BuildContext context, BluetoothService bt, WifiService wifi) {
     return Column(
@@ -242,6 +305,42 @@ class _HomeScreenState extends State<HomeScreen> {
               : _buildWidePlaceholder(),
         ),
       ],
+=======
+  Widget _buildNarrowLayout(BuildContext context) {
+    // 🟢 NEW: Listens to both BT and Wi-Fi state for status bar updates
+    return Consumer2<BluetoothService, WifiService>(
+      builder: (context, service, wifi, _) => Column(
+        children: [
+          _buildStatusBar(service, wifi),
+          Expanded(child: _buildScrollContent(context, service)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWideLayout(BuildContext context) {
+    // 🟢 NEW: Checks both BT and Wi-Fi state to reveal the Chat component
+    return Consumer2<BluetoothService, WifiService>(
+      builder: (context, service, wifi, _) => Row(
+        children: [
+          SizedBox(
+            width: 340,
+            child: Column(
+              children: [
+                _buildStatusBar(service, wifi),
+                Expanded(child: _buildScrollContent(context, service)),
+              ],
+            ),
+          ),
+          Container(width: 1, color: AppTheme.borderGlow),
+          Expanded(
+            child: (service.isConnected || wifi.isConnected)
+                ? const ChatScreen()
+                : _buildWidePlaceholder(),
+          ),
+        ],
+      ),
+>>>>>>> a53763d320be7b320454131c4120cbc49f48e947
     );
   }
 
@@ -277,7 +376,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildScrollContent(BuildContext context, BluetoothService service) {
     return ListView(
+<<<<<<< HEAD
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
+=======
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 80), // Increased bottom padding for FAB
+>>>>>>> a53763d320be7b320454131c4120cbc49f48e947
       children: [
         if (AppPlatform.isWeb) ...[
           _buildWebBanner(),
@@ -347,9 +450,16 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+<<<<<<< HEAD
   Widget _buildStatusBar(BluetoothService service, WifiService wifi) {
     final bool isWeb = AppPlatform.isWeb;
 
+=======
+  // 🟢 NEW: Integrated Wi-Fi status logic
+  Widget _buildStatusBar(BluetoothService service, WifiService wifi) {
+    final bool isWeb = AppPlatform.isWeb;
+    
+>>>>>>> a53763d320be7b320454131c4120cbc49f48e947
     String label;
     Color color;
     String? connectedName;
