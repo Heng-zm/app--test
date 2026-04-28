@@ -3,16 +3,15 @@ project(runner LANGUAGES CXX)
 
 # 1. Identity & Naming
 set(BINARY_NAME "bluetooth_chat")
-# RECOMMENDATION: Change example.com to your actual domain for production
 set(APPLICATION_ID "com.btsecurechat.app")
 
-cmake_policy(SET CMP0063 NEW)
+cmake_policy(SET CMP0063 NEW) # Visibility properties
+cmake_policy(SET CMP0069 NEW) # LTO/IPO support
 
-# 2. Performance & Security Definitions
-# Targeted for Windows 10 (0x0A00) as it is the minimum for reliable BLE/BT APIs
+# 2. Windows Environment Configuration
+# Targeted for Windows 10 (0x0A00) minimum.
+# UNICODE is mandatory for correct path handling with encryption keys.
 add_definitions(-DUNICODE -D_UNICODE -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00)
-
-set(CMAKE_INSTALL_RPATH "$ORIGIN/lib")
 
 # 3. Flutter library and tool builds
 include(${FLUTTER_MANAGED_DIR}/generated_plugins.cmake)
@@ -28,15 +27,44 @@ add_executable(${BINARY_NAME} WIN32
   "runner.exe.manifest"
 )
 
-# 5. Build Properties & Debugging
+# 5. Build Properties
 set_property(TARGET ${BINARY_NAME}
   PROPERTY VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:${BINARY_NAME}>")
 
-# Enable C++17 for better performance with modern encryption libraries
 set_target_properties(${BINARY_NAME} PROPERTIES
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED ON
+  MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL"
 )
+
+# 6. Performance & Security Hardening
+if(MSVC)
+  # /O2: Optimize for speed
+  # /guard:cf: Control Flow Guard (Security)
+  # /Gw: Optimize Global Data
+  target_compile_options(${BINARY_NAME} PRIVATE 
+    $<$<CONFIG:Release>:/O2 /Gw /guard:cf>
+    $<$<CONFIG:Debug>:/Zi /Ob0 /Od /RTC1>
+  )
+
+  # /OPT:REF & /OPT:ICF: Eliminate unused code and redundant data
+  target_link_options(${BINARY_NAME} PRIVATE 
+    $<$<CONFIG:Release>:/OPT:REF /OPT:ICF /INCREMENTAL:NO /guard:cf>
+  )
+endif()
+
+# 7. Interprocedural Optimization (LTO)
+# Crucial for AES-256 loop performance across compilation units
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+  include(CheckIPOSupported)
+  check_ipo_supported(RESULT ipo_supported)
+  if(ipo_supported)
+    set_target_properties(${BINARY_NAME} PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
+  endif()
+endif()
+
+# 8. Flutter Integration
+apply_standard_settings(${BINARY_NAME})
 
 target_compile_definitions(${BINARY_NAME} PRIVATE
   "FLUTTER_VERSION=\"${FLUTTER_VERSION}\""
@@ -46,20 +74,6 @@ target_compile_definitions(${BINARY_NAME} PRIVATE
   "FLUTTER_VERSION_BUILD=${FLUTTER_VERSION_BUILD}"
 )
 
-# 6. Release Optimization (LTO)
-# If building in Release mode, enable Interprocedural Optimization (Link Time Optimization)
-# This significantly speeds up the AES-256 encryption/decryption loops.
-if(CMAKE_BUILD_TYPE STREQUAL "Release")
-  include(CheckIPOSupported)
-  check_ipo_supported(RESULT ipo_supported)
-  if(ipo_supported)
-    set_target_properties(${BINARY_NAME} PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
-  endif()
-endif()
-
-apply_standard_settings(${BINARY_NAME})
-
-# 7. Linker & Dependencies
 target_link_libraries(${BINARY_NAME} PRIVATE
   flutter
   flutter_wrapper_app

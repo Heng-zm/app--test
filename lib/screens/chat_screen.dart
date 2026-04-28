@@ -1,6 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // Keep this for Clipboard support
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
@@ -19,45 +19,44 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _controller = TextEditingController();
-  final ScrollController _scrollCtrl = ScrollController();
   final FocusNode _focusNode = FocusNode();
 
   bool _showEncrypted = false;
-  int _lastMsgCount = 0;
-  bool _isAutoScrolling = false;
+
+  late BluetoothService _btService;
+  late WifiService _wifiService;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance
-        .addPostFrameCallback((_) => _scrollToBottom(animated: false));
+    // 🟢 FIX: Bind listeners in initState instead of doing side-effects in build()
+    _btService = context.read<BluetoothService>();
+    _wifiService = context.read<WifiService>();
+
+    _btService.addListener(_checkConnectionState);
+    _wifiService.addListener(_checkConnectionState);
   }
 
   @override
   void dispose() {
+    _btService.removeListener(_checkConnectionState);
+    _wifiService.removeListener(_checkConnectionState);
     _controller.dispose();
-    _scrollCtrl.dispose();
     _focusNode.dispose();
     super.dispose();
   }
 
-  void _scrollToBottom({bool animated = true}) {
-    if (!_scrollCtrl.hasClients || _isAutoScrolling) return;
+  // 🟢 FIX: Safe navigation handler that executes cleanly outside the build pipeline
+  void _checkConnectionState() {
+    if (!mounted) return;
 
-    _isAutoScrolling = true;
-    final double target = _scrollCtrl.position.maxScrollExtent;
+    final bool isWide = MediaQuery.sizeOf(context).width >= 720;
+    final bool isConnected = _btService.isConnected || _wifiService.isConnected;
 
-    if (animated) {
-      _scrollCtrl
-          .animateTo(
-            target,
-            duration: const Duration(milliseconds: 400),
-            curve: Curves.easeOutQuart,
-          )
-          .then((_) => _isAutoScrolling = false);
-    } else {
-      _scrollCtrl.jumpTo(target);
-      _isAutoScrolling = false;
+    if (!isConnected && !isWide) {
+      if (Navigator.canPop(context)) {
+        Navigator.pop(context);
+      }
     }
   }
 
@@ -65,46 +64,35 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget build(BuildContext context) {
     final bool isWide = MediaQuery.sizeOf(context).width >= 720;
 
-    return Consumer2<BluetoothService, WifiService>(
-      builder: (context, btService, wifiService, _) {
-        final List<Message> allMessages = [
-          ...btService.messages,
-          ...wifiService.messages
-        ]..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    // 🟢 PERF: Flattened widget tree using context.watch
+    final btService = context.watch<BluetoothService>();
+    final wifiService = context.watch<WifiService>();
 
-        final bool isConnected =
-            btService.isConnected || wifiService.isConnected;
+    final bool isConnected = btService.isConnected || wifiService.isConnected;
 
-        if (allMessages.length > _lastMsgCount) {
-          _lastMsgCount = allMessages.length;
-          _scrollToBottom();
-        }
+    // 🟢 PERF: Sort descending (newest first) to support reverse: true ListView
+    final List<Message> allMessages = [
+      ...btService.messages,
+      ...wifiService.messages
+    ]..sort((a, b) => b.timestamp.compareTo(a.timestamp));
 
-        if (!isConnected && !isWide && mounted) {
-          Future.microtask(() {
-            if (Navigator.canPop(context)) Navigator.pop(context);
-          });
-        }
-
-        return Scaffold(
-          backgroundColor: AppTheme.bgDeep,
-          appBar: _buildAppBar(
-              context, btService, wifiService, isConnected, isWide),
-          body: Column(
-            children: [
-              _SecurityStatusHeader(isWifi: wifiService.isConnected),
-              Expanded(
-                child: RepaintBoundary(
-                  child: allMessages.isEmpty
-                      ? _buildEmptyState()
-                      : _buildMessageList(allMessages),
-                ),
-              ),
-              _buildInputArea(btService, wifiService, isConnected),
-            ],
+    return Scaffold(
+      backgroundColor: AppTheme.bgDeep,
+      appBar:
+          _buildAppBar(context, btService, wifiService, isConnected, isWide),
+      body: Column(
+        children: [
+          _SecurityStatusHeader(isWifi: wifiService.isConnected),
+          Expanded(
+            child: RepaintBoundary(
+              child: allMessages.isEmpty
+                  ? _buildEmptyState()
+                  : _buildMessageList(allMessages),
+            ),
           ),
-        );
-      },
+          _buildInputArea(btService, wifiService, isConnected),
+        ],
+      ),
     );
   }
 
@@ -155,10 +143,12 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Widget _buildMessageList(List<Message> messages) {
     return ListView.builder(
-      controller: _scrollCtrl,
+      // 🟢 PERF: Reversing the list eliminates the need for manual, janky scroll controllers.
+      // The newest messages naturally push upward from the bottom, instantly adapting to the keyboard.
+      reverse: true,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
       itemCount: messages.length,
-      cacheExtent: 1000,
+      cacheExtent: 1500, // Keeps images slightly off-screen cached in memory
       itemBuilder: (context, index) {
         return _MessageBubble(
             key: ValueKey(messages[index].id),
@@ -170,9 +160,13 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Widget _buildInputArea(
       BluetoothService bt, WifiService wifi, bool isConnected) {
+    // 🟢 FIX: Correctly check viewInsetsOf for keyboard height
+    final double bottomPadding = MediaQuery.viewInsetsOf(context).bottom > 0
+        ? 12.0
+        : MediaQuery.paddingOf(context).bottom + 12.0;
+
     return Container(
-      padding: EdgeInsets.fromLTRB(
-          12, 8, 12, MediaQuery.paddingOf(context).bottom + 12),
+      padding: EdgeInsets.fromLTRB(12, 8, 12, bottomPadding),
       decoration: const BoxDecoration(
         color: AppTheme.bgSurface,
         border: Border(top: BorderSide(color: AppTheme.borderGlow, width: 0.5)),
@@ -190,6 +184,7 @@ class _ChatScreenState extends State<ChatScreen> {
               focusNode: _focusNode,
               enabled: isConnected,
               style: const TextStyle(color: AppTheme.textPrimary, fontSize: 14),
+              textInputAction: TextInputAction.send,
               decoration: InputDecoration(
                 hintText:
                     isConnected ? 'Type secure message...' : 'Radio Link Lost',
@@ -271,7 +266,7 @@ class _ChatScreenState extends State<ChatScreen> {
       onSelected: (val) {
         if (val == 'clear') {
           bt.clearMessages();
-          wifi.clearMessages(); // Now defined!
+          wifi.clearMessages();
         }
         if (val == 'disconnect') {
           bt.disconnect();
@@ -392,6 +387,8 @@ class _MessageBubble extends StatelessWidget {
                         base64Decode(message.text),
                         fit: BoxFit.cover,
                         cacheWidth: 500,
+                        // 🟢 FIX: Prevents images from flickering white when scrolled rapidly
+                        gaplessPlayback: true,
                         errorBuilder: (_, __, ___) => const Icon(
                             Icons.broken_image,
                             color: AppTheme.danger),

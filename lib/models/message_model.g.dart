@@ -22,16 +22,16 @@ class MessageAdapter extends TypeAdapter<Message> {
       encryptedText: fields[2] as String,
       isMine: fields[3] as bool,
       timestamp: fields[4] as DateTime,
-      // FIX: Safe casting with fallback for schema migration
+      // 🟢 FIX: Handle migration from older DB versions where these fields didn't exist
       isDecryptionError: fields[5] == null ? false : fields[5] as bool,
+      isImage: fields[6] == null ? false : fields[6] as bool,
     );
   }
 
   @override
   void write(BinaryWriter writer, Message obj) {
     writer
-      ..writeByte(
-          6) // Total count MUST match the number of writeByte() calls below
+      ..writeByte(7) // 🟢 FIX: Updated count to 7 to include the isImage field
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -43,7 +43,9 @@ class MessageAdapter extends TypeAdapter<Message> {
       ..writeByte(4)
       ..write(obj.timestamp)
       ..writeByte(5)
-      ..write(obj.isDecryptionError);
+      ..write(obj.isDecryptionError)
+      ..writeByte(6)
+      ..write(obj.isImage);
   }
 
   @override

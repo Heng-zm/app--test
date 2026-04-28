@@ -5,7 +5,6 @@ import 'package:provider/provider.dart';
 
 import 'models/message_model.dart';
 import 'platform/app_platform.dart';
-import 'platform/permission_helper.dart';
 import 'services/bluetooth_service.dart';
 import 'services/encryption_service.dart';
 import 'services/wifi_service.dart';
@@ -14,45 +13,40 @@ import 'screens/settings_screen.dart';
 import 'theme/app_theme.dart';
 
 Future<void> main() async {
+  // 🟢 FIX: Call initialize without assigning to an unused variable
   WidgetsFlutterBinding.ensureInitialized();
 
-  // ── 1. Atomic Initialization ──────────────────────────────────────────
-  final initFutures = <Future<void>>[
+  // ── 1. Early-Stage Initialization ─────────────────────────────────────
+  await Future.wait([
     Hive.initFlutter(),
-  ];
-  if (AppPlatform.isMobile) {
-    initFutures.add(
+    if (AppPlatform.isMobile)
       SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]),
-    );
-  }
-  await Future.wait(initFutures);
+  ]);
 
   // Register Adapters
   if (!Hive.isAdapterRegistered(0)) {
     Hive.registerAdapter(MessageAdapter());
   }
 
-  // Open persistence box for chat logs
+  // Open persistence box
   final Box<Message> messageBox = await Hive.openBox<Message>('messages');
 
-  // ── 2. Runtime Permissions ────────────────────────────────────────────
-  // FIX: PermissionHelper was imported but never called — wired up here so
-  // Bluetooth + Location permissions are requested before the UI starts and
-  // the import is no longer flagged as unused.
-  await PermissionHelper.requestAllPermissions();
-
-  // ── 3. System UI Configuration ────────────────────────────────────────
+  // ── 2. System UI Configuration ────────────────────────────────────────
   if (!AppPlatform.isWeb) {
     SystemChrome.setSystemUIOverlayStyle(
       const SystemUiOverlayStyle(
         statusBarColor: Colors.transparent,
         statusBarIconBrightness: Brightness.light,
-        systemNavigationBarColor: AppTheme.bgDeep,
+        systemNavigationBarColor: Colors.transparent,
         systemNavigationBarIconBrightness: Brightness.light,
+        systemNavigationBarContrastEnforced: false,
       ),
     );
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   }
+
+  // PERF: Limits memory overhead for the image-heavy chat sessions
+  PaintingBinding.instance.imageCache.maximumSize = 100;
 
   runApp(BtSecureChatApp(messageBox: messageBox));
 }
@@ -66,38 +60,31 @@ class BtSecureChatApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
-        // Core Logic Services
         Provider(create: (_) => EncryptionService()),
-
-        // Expose the messageBox via Provider so descendant widgets can access
-        // persisted messages.
         Provider<Box<Message>>.value(value: messageBox),
-
         ChangeNotifierProvider(
-          lazy: false, // Eager init to start hardware listeners immediately
+          lazy: false,
           create: (ctx) => BluetoothService(
             encryption: ctx.read<EncryptionService>(),
           ),
         ),
-
         ChangeNotifierProvider(
-          lazy: false, // Eager init — WifiService binds sockets in constructor
+          lazy: false,
           create: (ctx) => WifiService(
             encryption: ctx.read<EncryptionService>(),
           ),
         ),
       ],
       child: MaterialApp(
-        title: 'BT SecureChat',
+        title: 'BT TERMINAL',
         debugShowCheckedModeBanner: false,
         theme: AppTheme.darkTheme,
-        // ── Optimized Text Scaling ────────────────────────────────────────
         builder: (context, child) {
           final mediaQuery = MediaQuery.of(context);
           return MediaQuery(
             data: mediaQuery.copyWith(
               textScaler: mediaQuery.textScaler.clamp(
-                minScaleFactor: 0.9,
+                minScaleFactor: 0.85,
                 maxScaleFactor: 1.15,
               ),
             ),
@@ -120,26 +107,19 @@ class AppShell extends StatefulWidget {
 class _AppShellState extends State<AppShell> {
   int _index = 0;
 
-  late final List<Widget> _screens;
-
-  @override
-  void initState() {
-    super.initState();
-    _screens = const [
-      HomeScreen(),
-      SettingsScreen(),
-    ];
-  }
-
-  bool _isWide(Size size) => size.width >= 720;
+  static const List<Widget> _screens = [
+    HomeScreen(),
+    SettingsScreen(),
+  ];
 
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.sizeOf(context);
-    final isWide = _isWide(size);
+    final bool isWide = size.width >= 720;
 
     return Scaffold(
       backgroundColor: AppTheme.bgDeep,
+      extendBody: true,
       body: Row(
         children: [
           if (isWide) ...[
@@ -155,21 +135,21 @@ class _AppShellState extends State<AppShell> {
                   const IconThemeData(color: AppTheme.textDim, size: 24),
               selectedLabelTextStyle: const TextStyle(
                 color: AppTheme.accentCyan,
-                fontSize: 11,
+                fontSize: 10,
                 fontWeight: FontWeight.bold,
                 letterSpacing: 1,
               ),
               unselectedLabelTextStyle:
-                  const TextStyle(color: AppTheme.textDim, fontSize: 11),
+                  const TextStyle(color: AppTheme.textDim, fontSize: 10),
               destinations: const [
                 NavigationRailDestination(
-                  icon: Icon(Icons.terminal_outlined),
-                  selectedIcon: Icon(Icons.terminal),
+                  icon: Icon(Icons.radar_outlined),
+                  selectedIcon: Icon(Icons.radar),
                   label: Text('TERMINAL'),
                 ),
                 NavigationRailDestination(
-                  icon: Icon(Icons.shield_outlined),
-                  selectedIcon: Icon(Icons.shield),
+                  icon: Icon(Icons.security_outlined),
+                  selectedIcon: Icon(Icons.security),
                   label: Text('SECURITY'),
                 ),
               ],
@@ -187,29 +167,33 @@ class _AppShellState extends State<AppShell> {
       ),
       bottomNavigationBar: isWide
           ? null
-          : NavigationBar(
-              height: 70,
-              backgroundColor: AppTheme.bgSurface,
-              selectedIndex: _index,
-              elevation: 0,
-              onDestinationSelected: (idx) => setState(() => _index = idx),
-              indicatorColor: AppTheme.accentCyan.withValues(alpha: 0.1),
-              labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-              destinations: const [
-                NavigationDestination(
-                  icon:
-                      Icon(Icons.bluetooth_searching, color: AppTheme.textDim),
-                  selectedIcon: Icon(Icons.bluetooth_searching,
-                      color: AppTheme.accentCyan),
-                  label: 'Terminal',
-                ),
-                NavigationDestination(
-                  icon: Icon(Icons.security, color: AppTheme.textDim),
-                  selectedIcon:
-                      Icon(Icons.security, color: AppTheme.accentCyan),
-                  label: 'Security',
-                ),
-              ],
+          : Container(
+              decoration: const BoxDecoration(
+                border: Border(
+                    top: BorderSide(color: AppTheme.borderGlow, width: 0.5)),
+              ),
+              child: NavigationBar(
+                height: 65,
+                backgroundColor: AppTheme.bgSurface,
+                selectedIndex: _index,
+                elevation: 0,
+                onDestinationSelected: (idx) => setState(() => _index = idx),
+                indicatorColor: AppTheme.accentCyan.withValues(alpha: 0.1),
+                labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+                destinations: const [
+                  NavigationDestination(
+                    icon: Icon(Icons.radar, color: AppTheme.textDim),
+                    selectedIcon: Icon(Icons.radar, color: AppTheme.accentCyan),
+                    label: 'Terminal',
+                  ),
+                  NavigationDestination(
+                    icon: Icon(Icons.security, color: AppTheme.textDim),
+                    selectedIcon:
+                        Icon(Icons.security, color: AppTheme.accentCyan),
+                    label: 'Security',
+                  ),
+                ],
+              ),
             ),
     );
   }

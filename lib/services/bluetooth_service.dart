@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart' as fbp;
@@ -14,10 +15,10 @@ import '../models/device_model.dart';
 import 'bluetooth_classic_stub.dart'
     if (dart.library.io) 'bluetooth_classic_android.dart';
 
-// Nordic UART UUIDs (Standard for Serial-over-BLE)
+// Nordic UART UUIDs
 const String _kServiceUuid = '6E400001-B5A3-F393-E0A9-E50E24DCCA9E';
-const String _kTxUuid = '6E400003-B5A3-F393-E0A9-E50E24DCCA9E';
 const String _kRxUuid = '6E400002-B5A3-F393-E0A9-E50E24DCCA9E';
+const String _kTxUuid = '6E400003-B5A3-F393-E0A9-E50E24DCCA9E';
 
 enum BtConnectionState { disconnected, scanning, connecting, connected, error }
 
@@ -27,12 +28,12 @@ class BluetoothService extends ChangeNotifier {
   ClassicBluetoothHelper? _classic;
 
   fbp.BluetoothDevice? _bleDevice;
-  fbp.BluetoothCharacteristic? _bleRx;
+  fbp.BluetoothCharacteristic? _bleWrite;
 
   StreamSubscription? _bleNotifySub;
   StreamSubscription? _bleScanSub;
-  StreamSubscription? _bleStateSub;
-  StreamSubscription? _isScanningSub;
+  StreamSubscription? _bleAdapterSub;
+  StreamSubscription? _isScanningSub; // Now properly cancelled
   StreamSubscription? _discoverySub;
 
   BtConnectionState _state = BtConnectionState.disconnected;
@@ -46,7 +47,7 @@ class BluetoothService extends ChangeNotifier {
   bool _isDiscovering = false;
   bool _disposed = false;
 
-  final List<int> _byteBuffer = [];
+  final BytesBuilder _byteBuffer = BytesBuilder();
   final _discoverySubject = PublishSubject<BTDevice>();
 
   BluetoothService({required EncryptionService encryption})
@@ -56,9 +57,15 @@ class BluetoothService extends ChangeNotifier {
     }
 
     _discoverySub = _discoverySubject
-        .bufferTime(const Duration(milliseconds: 400))
+        .bufferTime(const Duration(milliseconds: 500))
         .where((list) => list.isNotEmpty)
         .listen(_addOrUpdateDiscoveredBatch);
+
+    _bleAdapterSub = fbp.FlutterBluePlus.adapterState.listen((state) {
+      if (state == fbp.BluetoothAdapterState.off) {
+        disconnect();
+      }
+    });
   }
 
   // ── Initialization ──────────────────────────────────────
@@ -110,7 +117,7 @@ class BluetoothService extends ChangeNotifier {
       _classic!.startDiscovery(
         onFound: (d) => _discoverySubject.add(d),
         onDone: () => _stopScanUI(),
-        onError: (e) => _setError('Scan Error'),
+        onError: (e) => _setError('Classic Scan Error'),
       );
     }
 
@@ -123,7 +130,7 @@ class BluetoothService extends ChangeNotifier {
             _discoverySubject.add(BTDevice(
               name: r.device.platformName.isNotEmpty
                   ? r.device.platformName
-                  : 'Unknown',
+                  : 'Unknown Node',
               address: r.device.remoteId.str,
               type: BTType.ble,
               rssi: r.rssi,
@@ -131,6 +138,9 @@ class BluetoothService extends ChangeNotifier {
             ));
           }
         });
+
+        // Properly manage the scanning status subscription
+        _isScanningSub?.cancel();
         _isScanningSub = fbp.FlutterBluePlus.isScanning.listen((isScanning) {
           if (!isScanning && _isDiscovering) _stopScanUI();
         });
@@ -145,11 +155,14 @@ class BluetoothService extends ChangeNotifier {
     for (final d in devices) {
       final idx = _discovered.indexWhere((x) => x.address == d.address);
       if (idx >= 0) {
-        _discovered[idx] = d;
+        if (_discovered[idx].rssi != d.rssi) {
+          _discovered[idx] = d;
+          changed = true;
+        }
       } else {
         _discovered.add(d);
+        changed = true;
       }
-      changed = true;
     }
     if (changed) {
       _discovered.sort((a, b) => (b.rssi ?? -100).compareTo(a.rssi ?? -100));
@@ -171,13 +184,13 @@ class BluetoothService extends ChangeNotifier {
           address: device.address,
           onData: _onRawData,
           onDone: disconnect,
-          onError: (_) => _setError('Link Lost'),
+          onError: (_) => _setError('Radio Link Lost'),
         );
       } else {
         _bleDevice = fbp.BluetoothDevice.fromId(device.address);
+
         await _bleDevice!.connect(timeout: const Duration(seconds: 10));
 
-        // Negotiate MTU for faster image transfers
         if (AppPlatform.isAndroid) {
           try {
             await _bleDevice!.requestMtu(512);
@@ -197,11 +210,11 @@ class BluetoothService extends ChangeNotifier {
           }
         }
 
-        if (rx == null || tx == null) throw Exception('No serial service');
+        if (rx == null || tx == null) throw Exception('UART service missing');
 
         await tx.setNotifyValue(true);
         _bleNotifySub = tx.onValueReceived.listen(_onRawData);
-        _bleRx = rx;
+        _bleWrite = rx;
       }
 
       _connectedDeviceName = device.name;
@@ -215,27 +228,36 @@ class BluetoothService extends ChangeNotifier {
   // ── Messaging ───────────────────────────────────────────
 
   void _onRawData(List<int> data) {
-    // Safety: prevent buffer overflow from malformed data
-    if (_byteBuffer.length > 5 * 1024 * 1024) _byteBuffer.clear();
+    if (_byteBuffer.length > 10 * 1024 * 1024) _byteBuffer.clear();
 
-    _byteBuffer.addAll(data);
+    _byteBuffer.add(data);
+
+    // 🟢 FIX: Use toBytes() instead of non-existent asUint8List()
+    final Uint8List current = _byteBuffer.toBytes();
+    int start = 0;
+
     while (true) {
-      final int idx = _byteBuffer.indexOf(10);
+      final int idx = current.indexOf(10, start);
       if (idx == -1) break;
 
-      final packetBytes = _byteBuffer.sublist(0, idx);
-      _byteBuffer.removeRange(0, idx + 1);
+      final packetBytes = current.sublist(start, idx);
+      start = idx + 1;
 
       if (packetBytes.isEmpty) continue;
 
       final line = utf8.decode(packetBytes, allowMalformed: true).trim();
 
-      // Offload heavy processing (images) to background isolate
-      if (line.length > 5000) {
+      if (line.length > 10000) {
         _processPacketInBg(line);
       } else {
         _processPacketSync(line);
       }
+    }
+
+    if (start > 0) {
+      final remaining = current.sublist(start);
+      _byteBuffer.clear();
+      _byteBuffer.add(remaining);
     }
   }
 
@@ -302,12 +324,18 @@ class BluetoothService extends ChangeNotifier {
     try {
       if (_classic != null && _classic!.isConnected) {
         await _classic!.send(Uint8List.fromList(packet));
-      } else if (_bleRx != null) {
-        // MTU slicing for BLE
+      } else if (_bleWrite != null) {
         final mtu = (_bleDevice?.mtuNow ?? 23) - 3;
+        int chunkCount = 0;
+
         for (var i = 0; i < packet.length; i += mtu) {
           final end = (i + mtu < packet.length) ? i + mtu : packet.length;
-          await _bleRx!.write(packet.sublist(i, end), withoutResponse: true);
+          await _bleWrite!.write(packet.sublist(i, end), withoutResponse: true);
+
+          chunkCount++;
+          if (chunkCount % 10 == 0) {
+            await Future.delayed(const Duration(milliseconds: 1));
+          }
         }
       }
 
@@ -330,19 +358,19 @@ class BluetoothService extends ChangeNotifier {
   Future<void> stopDiscovery() async {
     _isDiscovering = false;
     await _bleScanSub?.cancel();
+    await _isScanningSub?.cancel(); // Cancel properly
     if (fbp.FlutterBluePlus.isScanningNow) await fbp.FlutterBluePlus.stopScan();
     _notify();
   }
 
   Future<void> disconnect() async {
     await _bleNotifySub?.cancel();
-    await _bleStateSub?.cancel();
-    await _isScanningSub?.cancel();
+    await _isScanningSub?.cancel(); // Cancel properly
     if (_bleDevice != null) await _bleDevice!.disconnect();
     if (_classic != null) await _classic!.disconnect();
 
     _bleDevice = null;
-    _bleRx = null;
+    _bleWrite = null;
     _byteBuffer.clear();
     _connectedDeviceName = null;
     _setState(BtConnectionState.disconnected);
@@ -373,6 +401,8 @@ class BluetoothService extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _discoverySub?.cancel();
+    _bleAdapterSub?.cancel();
+    _isScanningSub?.cancel(); // Cancel properly
     _discoverySubject.close();
     disconnect();
     super.dispose();

@@ -4,13 +4,14 @@ import 'package:provider/provider.dart';
 import '../platform/app_platform.dart';
 import '../platform/permission_helper.dart';
 import '../services/bluetooth_service.dart';
+import '../services/wifi_service.dart';
 import '../models/device_model.dart';
 import '../theme/app_theme.dart';
 import '../widgets/bt_signal_bars.dart';
 import '../widgets/glow_container.dart';
 import '../widgets/scan_animation.dart';
 import '../widgets/platform_badge.dart';
-import '../widgets/wifi_connection_dialog.dart'; // 🟢 NEW: Imported the Wi-Fi Dialog
+import '../widgets/wifi_connection_dialog.dart';
 import 'chat_screen.dart';
 import 'settings_screen.dart';
 
@@ -25,28 +26,58 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _permissionDenied = false;
   String? _bootError;
 
+  late WifiService _wifiService;
+  bool _wasWifiConnected = false;
+
   @override
   void initState() {
     super.initState();
+    _wifiService = context.read<WifiService>();
+    _wifiService.addListener(_onWifiStateChanged);
+
     WidgetsBinding.instance.addPostFrameCallback((_) => _boot());
+  }
+
+  @override
+  void dispose() {
+    _wifiService.removeListener(_onWifiStateChanged);
+    super.dispose();
+  }
+
+  // 🟢 FIX: Safer navigation handling to prevent tearing down unintended routes
+  void _onWifiStateChanged() {
+    if (!mounted) return;
+    final bool isConnected = _wifiService.isConnected;
+    final bool isWide = MediaQuery.sizeOf(context).width >= 720;
+
+    if (isConnected && !_wasWifiConnected) {
+      if (!isWide) {
+        final nav = Navigator.of(context);
+        if (nav.canPop()) {
+          nav.popUntil((route) => route.isFirst);
+        }
+        nav.push(
+          MaterialPageRoute(builder: (_) => const ChatScreen()),
+        );
+      }
+    }
+
+    _wasWifiConnected = isConnected;
   }
 
   Future<void> _boot() async {
     try {
-      // Web: skip all BT/permission init entirely
       if (AppPlatform.isWeb) {
         if (mounted) setState(() => _initialized = true);
         return;
       }
 
-      // Step 1: Permissions (mobile only)
       if (AppPlatform.needsRuntimePermissions) {
         bool granted = false;
         try {
           granted = await PermissionHelper.requestAllPermissions();
         } catch (e) {
           debugPrint('[Boot] Permission request failed: $e');
-          granted = false;
         }
 
         if (!granted && mounted) {
@@ -61,7 +92,6 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!mounted) return;
       setState(() => _permissionDenied = false);
 
-      // Step 2: Bluetooth init
       try {
         await context.read<BluetoothService>().initialize();
       } catch (e) {
@@ -71,7 +101,6 @@ class _HomeScreenState extends State<HomeScreen> {
       debugPrint('[Boot] Unexpected error: $e');
       if (mounted) setState(() => _bootError = e.toString());
     } finally {
-      // ALWAYS unblock the UI
       if (mounted) setState(() => _initialized = true);
     }
   }
@@ -79,6 +108,11 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final bool isWide = MediaQuery.sizeOf(context).width >= 720;
+
+    // 🟢 PERF: Flattened Widget Tree. By watching at the top level,
+    // we eliminate multiple nested Consumer2 widgets in the layout builders.
+    final btService = context.watch<BluetoothService>();
+    final wifiService = context.watch<WifiService>();
 
     return Scaffold(
       backgroundColor: AppTheme.bgDeep,
@@ -92,8 +126,29 @@ class _HomeScreenState extends State<HomeScreen> {
               : _permissionDenied
                   ? _buildPermissionDenied()
                   : isWide
-                      ? _buildWideLayout(context)
-                      : _buildNarrowLayout(context),
+                      ? _buildWideLayout(context, btService, wifiService)
+                      : _buildNarrowLayout(context, btService, wifiService),
+      floatingActionButton:
+          _initialized && !_permissionDenied && _bootError == null && !isWide
+              ? (btService.isConnected || wifiService.isConnected)
+                  ? FloatingActionButton.extended(
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const ChatScreen()),
+                      ),
+                      backgroundColor: AppTheme.accentGreen,
+                      icon: const Icon(Icons.chat, color: AppTheme.bgDeep),
+                      label: const Text(
+                        'RESUME SESSION',
+                        style: TextStyle(
+                          color: AppTheme.bgDeep,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 1,
+                        ),
+                      ),
+                    )
+                  : null
+              : null,
     );
   }
 
@@ -106,7 +161,6 @@ class _HomeScreenState extends State<HomeScreen> {
       titleSpacing: 16,
       title: Row(
         children: [
-          // Animated pulse dot
           _PulseDot(),
           const SizedBox(width: 10),
           const Text(
@@ -122,7 +176,6 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
       actions: [
-        // 🟢 NEW: Wi-Fi Fallback Button
         IconButton(
           icon: const Icon(Icons.wifi, color: AppTheme.accentCyan, size: 22),
           tooltip: 'WLAN Fallback',
@@ -159,38 +212,36 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // ── Layouts ──────────────────────────────────────────────
 
-  Widget _buildNarrowLayout(BuildContext context) {
-    return Consumer<BluetoothService>(
-      builder: (context, service, _) => Column(
-        children: [
-          _buildStatusBar(service),
-          Expanded(child: _buildScrollContent(context, service)),
-        ],
-      ),
+  Widget _buildNarrowLayout(
+      BuildContext context, BluetoothService bt, WifiService wifi) {
+    return Column(
+      children: [
+        _buildStatusBar(bt, wifi),
+        Expanded(child: _buildScrollContent(context, bt)),
+      ],
     );
   }
 
-  Widget _buildWideLayout(BuildContext context) {
-    return Consumer<BluetoothService>(
-      builder: (context, service, _) => Row(
-        children: [
-          SizedBox(
-            width: 340,
-            child: Column(
-              children: [
-                _buildStatusBar(service),
-                Expanded(child: _buildScrollContent(context, service)),
-              ],
-            ),
+  Widget _buildWideLayout(
+      BuildContext context, BluetoothService bt, WifiService wifi) {
+    return Row(
+      children: [
+        SizedBox(
+          width: 340,
+          child: Column(
+            children: [
+              _buildStatusBar(bt, wifi),
+              Expanded(child: _buildScrollContent(context, bt)),
+            ],
           ),
-          Container(width: 1, color: AppTheme.borderGlow),
-          Expanded(
-            child: service.isConnected
-                ? const ChatScreen()
-                : _buildWidePlaceholder(),
-          ),
-        ],
-      ),
+        ),
+        Container(width: 1, color: AppTheme.borderGlow),
+        Expanded(
+          child: (bt.isConnected || wifi.isConnected)
+              ? const ChatScreen()
+              : _buildWidePlaceholder(),
+        ),
+      ],
     );
   }
 
@@ -226,7 +277,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildScrollContent(BuildContext context, BluetoothService service) {
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
       children: [
         if (AppPlatform.isWeb) ...[
           _buildWebBanner(),
@@ -296,20 +347,33 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildStatusBar(BluetoothService service) {
+  Widget _buildStatusBar(BluetoothService service, WifiService wifi) {
     final bool isWeb = AppPlatform.isWeb;
-    final String label = isWeb
-        ? 'WEB — BLUETOOTH UNAVAILABLE'
-        : service.state.name.toUpperCase();
-    final Color color = isWeb
-        ? AppTheme.warning
-        : service.state == BtConnectionState.connected
-            ? AppTheme.accentGreen
-            : service.state == BtConnectionState.error
-                ? AppTheme.danger
-                : service.state == BtConnectionState.scanning
-                    ? AppTheme.accentCyan
-                    : AppTheme.textSecondary;
+
+    String label;
+    Color color;
+    String? connectedName;
+
+    if (wifi.isConnected) {
+      label = 'WLAN SECURE LINK';
+      color = AppTheme.accentGreen;
+      connectedName = wifi.localIP ?? 'Direct Link';
+    } else if (isWeb) {
+      label = 'WEB — BLUETOOTH UNAVAILABLE';
+      color = AppTheme.warning;
+    } else {
+      label = service.state.name.toUpperCase();
+      color = service.state == BtConnectionState.connected
+          ? AppTheme.accentGreen
+          : service.state == BtConnectionState.error
+              ? AppTheme.danger
+              : service.state == BtConnectionState.scanning
+                  ? AppTheme.accentCyan
+                  : AppTheme.textSecondary;
+      if (service.isConnected) {
+        connectedName = service.connectedDeviceName;
+      }
+    }
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
@@ -342,10 +406,10 @@ class _HomeScreenState extends State<HomeScreen> {
               letterSpacing: 1.5,
             ),
           ),
-          if (service.isConnected && service.connectedDeviceName != null) ...[
+          if (connectedName != null) ...[
             const Spacer(),
             Text(
-              service.connectedDeviceName!,
+              connectedName,
               style: const TextStyle(
                 color: AppTheme.accentGreen,
                 fontSize: 10,
@@ -372,6 +436,9 @@ class _HomeScreenState extends State<HomeScreen> {
         borderRadius: BorderRadius.circular(14),
         child: InkWell(
           borderRadius: BorderRadius.circular(14),
+          // 🟢 FIX: explicitly disable splash ripple when running on Web
+          splashColor: disabled ? Colors.transparent : null,
+          highlightColor: disabled ? Colors.transparent : null,
           onTap: disabled
               ? null
               : scanning
@@ -454,6 +521,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final bool isConnecting = service.state == BtConnectionState.connecting;
 
     return Padding(
+      // 🟢 FIX: Added ValueKey bounded to MAC address to stop list rebuilds
+      // from re-triggering the entrance animation every time the signal strength updates.
+      key: ValueKey(device.address),
       padding: const EdgeInsets.only(bottom: 8),
       child: Material(
         color: Colors.transparent,
@@ -470,7 +540,6 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             child: Row(
               children: [
-                // Device type icon
                 Container(
                   width: 38,
                   height: 38,
@@ -496,7 +565,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
                 const SizedBox(width: 12),
-                // Device info
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -546,15 +614,13 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                           if (device.rssi != null) ...[
                             const SizedBox(width: 8),
-                            BTSignalBars(
-                                bars: device.signalInfo.bars), // ✅ Fixed
+                            BTSignalBars(bars: device.signalInfo.bars),
                           ],
                         ],
                       ),
                     ],
                   ),
                 ),
-                // Connect button
                 Container(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -579,7 +645,10 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       ),
-    ).animate().fadeIn(duration: 200.ms, delay: (index * 50).ms).slideY(
+    )
+        .animate(key: ValueKey('anim_${device.address}'))
+        .fadeIn(duration: 200.ms, delay: (index * 50).ms)
+        .slideY(
           begin: 0.1,
           end: 0,
           duration: 200.ms,
@@ -796,8 +865,6 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       );
 }
-
-// ── Animated pulse dot for AppBar ────────────────────────
 
 class _PulseDot extends StatefulWidget {
   @override

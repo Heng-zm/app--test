@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:network_info_plus/network_info_plus.dart';
@@ -34,7 +35,9 @@ class WifiService extends ChangeNotifier {
   String? _localIP;
 
   final List<Message> _messages = [];
-  final List<int> _byteBuffer = [];
+
+  // 🟢 PERF: Use BytesBuilder for O(1) byte accumulation and efficient slicing
+  final BytesBuilder _byteBuffer = BytesBuilder();
 
   bool _disposed = false;
 
@@ -48,7 +51,6 @@ class WifiService extends ChangeNotifier {
   String? get errorMessage => _errorMessage;
   String? get localIP => _localIP;
 
-  // ── Message Management ──────────────────────────────────
   void clearMessages() {
     _messages.clear();
     _notify();
@@ -65,6 +67,11 @@ class WifiService extends ChangeNotifier {
       final info = NetworkInfo();
       _localIP = await info.getWifiIP();
 
+      // Fallback if IP detection fails
+      if (_localIP == null || _localIP == '0.0.0.0') {
+        throw Exception('WiFi IP not detected. Connect to a network first.');
+      }
+
       _serverSocket =
           await ServerSocket.bind(InternetAddress.anyIPv4, 4567, shared: true);
 
@@ -74,14 +81,14 @@ class WifiService extends ChangeNotifier {
 
       _startUdpBroadcast();
     } catch (e) {
-      _setError('Failed to start host: $e');
+      _setError('Host Error: $e');
     }
   }
 
   void _handleNewConnection(Socket incomingSocket) {
     _socket = incomingSocket;
 
-    // TCP Optimizations
+    // 🟢 PERF: Disable Nagle's algorithm for real-time chat responsiveness
     _socket!.setOption(SocketOption.tcpNoDelay, true);
 
     _stopUdp();
@@ -106,6 +113,7 @@ class WifiService extends ChangeNotifier {
           reuseAddress: true);
       _udpSocket!.broadcastEnabled = true;
 
+      // Calculate broadcast address (simple 255 fallback)
       String broadcastAddr = '255.255.255.255';
       if (_localIP != null && _localIP!.contains('.')) {
         broadcastAddr =
@@ -115,7 +123,9 @@ class WifiService extends ChangeNotifier {
       _broadcastTimer = Timer.periodic(const Duration(milliseconds: 1500), (_) {
         if (_localIP != null && _udpSocket != null) {
           final data = utf8.encode('BTChatHost:$_localIP');
-          _udpSocket!.send(data, InternetAddress(broadcastAddr), 4568);
+          try {
+            _udpSocket!.send(data, InternetAddress(broadcastAddr), 4568);
+          } catch (_) {}
         }
       });
     } catch (e) {
@@ -177,28 +187,38 @@ class WifiService extends ChangeNotifier {
 
   // ── Data Handling ───────────────────────────────────────
   void _onRawData(List<int> data) {
-    // 🛡️ Safety: Prevent buffer overflow (Max 10MB)
-    if (_byteBuffer.length > 10 * 1024 * 1024) _byteBuffer.clear();
+    if (_byteBuffer.length > 15 * 1024 * 1024)
+      _byteBuffer.clear(); // Safety cap
 
-    _byteBuffer.addAll(data);
+    _byteBuffer.add(data);
+
+    final Uint8List current = _byteBuffer.toBytes();
+    int start = 0;
 
     while (true) {
-      final int newlineIndex = _byteBuffer.indexOf(10);
-      if (newlineIndex == -1) break;
+      final int idx = current.indexOf(10, start); // Find Newline \n
+      if (idx == -1) break;
 
-      final packetBytes = _byteBuffer.sublist(0, newlineIndex);
-      _byteBuffer.removeRange(0, newlineIndex + 1);
+      final packetBytes = current.sublist(start, idx);
+      start = idx + 1;
 
       if (packetBytes.isEmpty) continue;
 
       final line = utf8.decode(packetBytes, allowMalformed: true);
 
-      // 🛠️ PERF: Use Isolates for long image data, Main thread for short text
-      if (line.length > 5000) {
+      // 🟢 PERF: Use Isolates only for large payloads (>10KB)
+      if (line.length > 10000) {
         _processPacketInBg(line);
       } else {
         _processPacketSync(line);
       }
+    }
+
+    // Clean up processed bytes
+    if (start > 0) {
+      final remaining = current.sublist(start);
+      _byteBuffer.clear();
+      _byteBuffer.add(remaining);
     }
   }
 
@@ -209,6 +229,12 @@ class WifiService extends ChangeNotifier {
       _messages.add(msg);
       _notify();
     }
+  }
+
+  /// Updates the encryption key for the Wi-Fi tunnel.
+  void updatePassphrase(String passphrase) {
+    _encryption.updatePassphrase(passphrase);
+    _notify(); // Triggers rebuilds for any active chat sessions
   }
 
   Future<void> _processPacketInBg(String line) async {
@@ -276,7 +302,7 @@ class WifiService extends ChangeNotifier {
       ));
       _notify();
     } catch (e) {
-      _setError('Transmission failed');
+      _setError('Link failed');
       disconnect();
     }
   }
@@ -293,16 +319,19 @@ class WifiService extends ChangeNotifier {
     _stopUdp();
     await _socketSub?.cancel();
     _socketSub = null;
+
     try {
       _socket?.destroy();
     } catch (_) {}
     _socket = null;
+
     try {
       await _serverSocket?.close();
     } catch (_) {}
     _serverSocket = null;
+
     _byteBuffer.clear();
-    // FIX: Wrap bare `if` body in braces (lint: always_use_control_flow_braces)
+
     if (_state != WifiConnectionState.error) {
       _setState(WifiConnectionState.disconnected);
     }

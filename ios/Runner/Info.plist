@@ -26,33 +26,37 @@
     <key>LSRequiresIPhoneOS</key>
     <true/>
 
-    <!-- 2. Bluetooth Hardware Permissions -->
+    <!-- 2. Bluetooth Hardware Permissions (iOS 13+) -->
     <key>NSBluetoothAlwaysUsageDescription</key>
-    <string>BT SecureChat requires Bluetooth to discover and connect to nearby nodes for secure, offline messaging.</string>
+    <string>This app uses Bluetooth to discover nearby users and establish an encrypted peer-to-peer chat session without requiring internet access.</string>
     <key>NSBluetoothPeripheralUsageDescription</key>
-    <string>BT SecureChat needs Bluetooth access to allow other devices to establish an encrypted link with your node.</string>
+    <string>This app acts as a peripheral to allow other secure nodes to find and link with your device for offline messaging.</string>
 
-    <!-- 3. Location Permissions (Required for discovery and SSID retrieval) -->
+    <!-- 3. Location Permissions (Required for Bluetooth Scanning & Wifi SSID) -->
     <key>NSLocationWhenInUseUsageDescription</key>
-    <string>Location access is used to scan for nearby Bluetooth signal signatures and identify the local network.</string>
+    <string>Location access is required to perform Bluetooth LE scans and identify local network segments for peer discovery.</string>
     <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-    <string>Background location allows the app to maintain radio discovery and link stability even when the screen is locked.</string>
-    <key>NSLocationAlwaysUsageDescription</key>
-    <string>Continuous location access is required for persistent background Bluetooth discovery.</string>
+    <string>Background location enables the app to maintain the secure radio link and notify you of new messages even when the app is minimized.</string>
 
-    <!-- 4. Local Network (Required for network_info_plus on iOS 14+) -->
+    <!-- 4. Local Network (iOS 14+ Required for WifiService) -->
     <key>NSLocalNetworkUsageDescription</key>
-    <string>This app uses the local network to determine connection context and improve peer discovery.</string>
+    <string>This app uses the local network to discover and connect with other chat partners on the same Wi-Fi or Hotspot network.</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_http._tcp</string>
+        <string>_bonjour._tcp</string>
+        <string>_lnp._tcp.</string>
+    </array>
 
     <!-- 5. Media & File Sharing Permissions -->
     <key>NSCameraUsageDescription</key>
-    <string>Camera access is required to capture photos to be sent through the encrypted tunnel.</string>
+    <string>The camera is used to take photos that are then encrypted and sent securely to your chat partner.</string>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Microphone access is needed for recording encrypted voice messages.</string>
+    <string>The microphone is used to record secure voice messages for transmission through the encrypted tunnel.</string>
     <key>NSPhotoLibraryUsageDescription</key>
-    <string>Access to your photos allows you to select media for secure transmission.</string>
+    <string>Access to your gallery is required to select and encrypt images for sharing within the secure chat.</string>
     <key>NSPhotoLibraryAddUsageDescription</key>
-    <string>Required to save decrypted images received from chat partners to your gallery.</string>
+    <string>This allows the app to save decrypted photos received from your chat partner directly to your gallery.</string>
     <key>LSSupportsOpeningDocumentsInPlace</key>
     <true/>
 
@@ -71,6 +75,7 @@
         <string>bluetooth-central</string>
         <string>bluetooth-peripheral</string>
         <string>fetch</string>
+        <string>remote-notification</string>
     </array>
 
     <!-- 8. UI Appearance & Performance -->
@@ -89,7 +94,15 @@
     <key>UIMainStoryboardFile</key>
     <string>Main</string>
 
-    <!-- 9. Device Orientations -->
+    <!-- 9. Navigation & System Integration -->
+    <key>LSApplicationQueriesSchemes</key>
+    <array>
+        <string>itms-apps</string>
+        <string>mailto</string>
+        <string>tel</string>
+    </array>
+
+    <!-- 10. Device Orientations -->
     <key>UISupportedInterfaceOrientations</key>
     <array>
         <string>UIInterfaceOrientationPortrait</string>
@@ -102,7 +115,7 @@
         <string>UIInterfaceOrientationLandscapeRight</string>
     </array>
 
-    <!-- 10. Input & Logic Metadata -->
+    <!-- 11. Input & Logic Metadata -->
     <key>UIApplicationSupportsIndirectInputEvents</key>
     <true/>
 </dict>

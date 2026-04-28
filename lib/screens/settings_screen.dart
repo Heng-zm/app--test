@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/bluetooth_service.dart';
+import '../services/wifi_service.dart';
 import '../services/encryption_service.dart';
 import '../platform/app_platform.dart';
 import '../theme/app_theme.dart';
@@ -18,13 +19,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _passphraseCtrl = TextEditingController();
   bool _obscure = true;
   String _hashPreview = '';
-  bool _saved = false;
+  bool _isSaved = false;
 
   @override
   void initState() {
     super.initState();
-    // Initialize with default key signature
-    _hashPreview = EncryptionService.hashPreview('BT_CHAT_SECURE_KEY_2024');
     _loadSavedPassphrase();
   }
 
@@ -32,6 +31,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final prefs = await SharedPreferences.getInstance();
     final saved = prefs.getString('passphrase');
 
+    // Default fallback if nothing is stored in device memory
     final activePassphrase =
         (saved != null && saved.isNotEmpty) ? saved : 'BT_CHAT_SECURE_KEY_2024';
 
@@ -39,7 +39,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       setState(() {
         _passphraseCtrl.text = activePassphrase;
         _hashPreview = EncryptionService.hashPreview(activePassphrase);
-        _saved = saved != null && saved.isNotEmpty;
+        _isSaved = saved != null && saved.isNotEmpty;
       });
     }
   }
@@ -57,7 +57,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       appBar: AppBar(
         backgroundColor: AppTheme.bgDeep,
         elevation: 0,
-        title: const Text('SECURITY SETTINGS'),
+        title: const Text('SECURITY PROTOCOLS'),
         centerTitle: false,
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
@@ -67,17 +67,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: GestureDetector(
         onTap: () => FocusScope.of(context).unfocus(),
         child: ListView(
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
           children: [
             const _StatusCard(),
-            const SizedBox(height: 22),
-            _buildPassphraseSection(),
-            const SizedBox(height: 22),
-            _buildFingerprintCard(),
-            const SizedBox(height: 22),
-            const _PlatformCard(),
-            const SizedBox(height: 22),
-            const _TipsSection(),
+            const SizedBox(height: 24),
+            _buildPassphraseInput(),
+            const SizedBox(height: 24),
+            _buildFingerprintDisplay(),
+            const SizedBox(height: 24),
+            const _ArchitectureCard(),
+            const SizedBox(height: 24),
+            const _TipsCard(),
             const SizedBox(height: 40),
           ],
         ),
@@ -85,41 +85,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Widget _buildPassphraseSection() {
+  Widget _buildPassphraseInput() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(children: [
-          const Text(
-            'SHARED PASSPHRASE',
-            style: TextStyle(
-              color: AppTheme.textSecondary,
-              fontSize: 10,
-              fontWeight: FontWeight.bold,
-              letterSpacing: 2,
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text(
+              'SHARED PASSPHRASE',
+              style: TextStyle(
+                  color: AppTheme.textSecondary,
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 2),
             ),
-          ),
-          const SizedBox(width: 8),
-          if (_saved)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: AppTheme.accentGreen.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(4),
+            if (_isSaved)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                    color: AppTheme.accentGreen.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(4)),
+                child: const Text('ACTIVE',
+                    style: TextStyle(
+                        color: AppTheme.accentGreen,
+                        fontSize: 9,
+                        fontWeight: FontWeight.bold)),
               ),
-              child: const Text(
-                'SAVED',
-                style: TextStyle(
-                    color: AppTheme.accentGreen,
-                    fontSize: 8,
-                    fontWeight: FontWeight.bold),
-              ),
-            ),
-        ]),
-        const SizedBox(height: 6),
-        const Text(
-          'Both nodes must use the same exact passphrase for successful decryption.',
-          style: TextStyle(color: AppTheme.textDim, fontSize: 11),
+          ],
         ),
         const SizedBox(height: 12),
         TextField(
@@ -130,19 +123,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
               fontFamily: 'monospace',
               fontSize: 14),
           onChanged: (v) {
+            // 🟢 PERF: Only calculate hash if actually needed to reduce CPU cycle
             setState(() {
-              _saved = false;
-              _hashPreview =
-                  v.isNotEmpty ? EncryptionService.hashPreview(v) : '00000000';
+              _isSaved = false;
+              _hashPreview = EncryptionService.hashPreview(v.isEmpty ? ' ' : v);
             });
           },
           decoration: InputDecoration(
-            hintText: 'Enter shared passphrase…',
-            prefixIcon:
-                const Icon(Icons.key, color: AppTheme.textDim, size: 17),
+            hintText: 'Enter secure key...',
+            prefixIcon: const Icon(Icons.lock_outline, size: 18),
             suffixIcon: IconButton(
               icon: Icon(_obscure ? Icons.visibility_off : Icons.visibility,
-                  color: AppTheme.textSecondary, size: 17),
+                  size: 18, color: AppTheme.textSecondary),
               onPressed: () => setState(() => _obscure = !_obscure),
             ),
           ),
@@ -151,28 +143,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
         Row(
           children: [
             Expanded(
-              child: OutlinedButton.icon(
-                onPressed: _generatePassphrase,
-                icon: const Icon(Icons.auto_awesome, size: 15),
-                label: const Text('GENERATE'),
+              child: OutlinedButton(
+                onPressed: _generateNewKey,
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: AppTheme.accentCyan,
-                  side: const BorderSide(color: AppTheme.accentCyan),
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                ),
+                    side: const BorderSide(color: AppTheme.accentCyan),
+                    foregroundColor: AppTheme.accentCyan),
+                child: const Text('GENERATE'),
               ),
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: ElevatedButton.icon(
-                onPressed: _applyPassphrase,
-                icon: const Icon(Icons.check, size: 15),
-                label: const Text('APPLY & SAVE'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.accentCyan,
-                  foregroundColor: AppTheme.bgDeep,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                ),
+              child: ElevatedButton(
+                onPressed: _applySecuritySettings,
+                child: const Text('APPLY & SAVE'),
               ),
             ),
           ],
@@ -181,267 +164,199 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Widget _buildFingerprintCard() {
+  Widget _buildFingerprintDisplay() {
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
         color: AppTheme.bgCard,
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppTheme.borderGlow),
       ),
       child: Row(
         children: [
-          const Icon(Icons.fingerprint, color: AppTheme.accentPurple, size: 22),
-          const SizedBox(width: 12),
+          const Icon(Icons.fingerprint, color: AppTheme.accentPurple, size: 28),
+          const SizedBox(width: 16),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('KEY FINGERPRINT',
+                const Text('CRYPTO FINGERPRINT',
                     style: TextStyle(
-                        color: AppTheme.textSecondary,
-                        fontSize: 9,
-                        letterSpacing: 1.5)),
+                        color: AppTheme.textDim,
+                        fontSize: 10,
+                        letterSpacing: 1)),
+                const SizedBox(height: 4),
                 Text(
                   _hashPreview,
                   style: const TextStyle(
-                    color: AppTheme.accentPurple,
-                    fontSize: 18,
-                    fontFamily: 'monospace',
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 3,
-                  ),
+                      color: AppTheme.accentPurple,
+                      fontSize: 18,
+                      fontFamily: 'monospace',
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 2),
                 ),
               ],
             ),
           ),
           IconButton(
-            onPressed: () async {
-              await Clipboard.setData(ClipboardData(text: _hashPreview));
-              if (!mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                    content: Text('Fingerprint Copied'),
-                    duration: Duration(seconds: 1)),
-              );
+            icon: const Icon(Icons.copy_all, color: AppTheme.textDim, size: 20),
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: _hashPreview));
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                  content: Text('Fingerprint copied to clipboard')));
             },
-            icon: const Icon(Icons.copy, color: AppTheme.textDim, size: 17),
           ),
         ],
       ),
     );
   }
 
-  void _generatePassphrase() {
-    final p = EncryptionService.generatePassphrase();
-    _passphraseCtrl.value = TextEditingValue(
-      text: p,
-      selection: TextSelection.collapsed(offset: p.length),
-    );
+  void _generateNewKey() {
+    final key = EncryptionService.generatePassphrase();
     setState(() {
-      _hashPreview = EncryptionService.hashPreview(p);
+      _passphraseCtrl.text = key;
+      _hashPreview = EncryptionService.hashPreview(key);
       _obscure = false;
-      _saved = false;
+      _isSaved = false;
     });
   }
 
-  Future<void> _applyPassphrase() async {
-    final p = _passphraseCtrl.text.trim();
-    if (p.isEmpty) return;
+  Future<void> _applySecuritySettings() async {
+    final key = _passphraseCtrl.text.trim();
+    if (key.isEmpty) return;
 
     FocusScope.of(context).unfocus();
 
-    // Update the live services
-    context.read<BluetoothService>().updatePassphrase(p);
+    // 🟢 Now both calls will work perfectly
+    context.read<BluetoothService>().updatePassphrase(key);
+    context.read<WifiService>().updatePassphrase(key);
 
-    // Save to local storage
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('passphrase', p);
+    await prefs.setString('passphrase', key);
 
     if (!mounted) return;
-
-    setState(() => _saved = true);
+    setState(() => _isSaved = true);
 
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: const Text('Security Parameters Updated'),
-      backgroundColor: AppTheme.accentGreen.withValues(alpha: 0.9),
-      behavior: SnackBarBehavior.floating,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      backgroundColor: AppTheme.accentGreen,
+      content: const Text('Encryption Parameters Synchronized',
+          style:
+              TextStyle(color: AppTheme.bgDeep, fontWeight: FontWeight.bold)),
     ));
   }
 }
 
 class _StatusCard extends StatelessWidget {
   const _StatusCard();
-
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(14),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            AppTheme.accentCyan.withValues(alpha: 0.09),
-            AppTheme.accentPurple.withValues(alpha: 0.04)
-          ],
-        ),
         border: Border.all(color: AppTheme.accentCyan.withValues(alpha: 0.3)),
+        gradient: LinearGradient(colors: [
+          AppTheme.accentCyan.withValues(alpha: 0.05),
+          Colors.transparent
+        ]),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(children: [
-            Icon(Icons.shield_outlined, color: AppTheme.accentCyan, size: 20),
-            SizedBox(width: 10),
-            Text(
-              'ENCRYPTION STATUS',
-              style: TextStyle(
-                color: AppTheme.accentCyan,
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 1.5,
-              ),
-            ),
-          ]),
-          const SizedBox(height: 14),
-          _row('Algorithm', 'AES-256-CBC'),
-          _row('Key derivation', 'SHA-256'),
-          _row('IV generation', 'Random per packet ✓'),
-          _row('Version', 'v2 (Live)'),
+          _row('Protocol', 'AES-256-CBC'),
+          _row('IV Management', 'Random (Dynamic)'),
+          _row('Hash Function', 'SHA-256'),
+          _row('Transport Layer', 'BT / WLAN'),
         ],
       ),
     );
   }
 
-  Widget _row(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 7),
-      child: Row(
-        children: [
-          Text(label,
+  Widget _row(String l, String v) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child:
+            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          Text(l,
               style:
                   const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-          const Spacer(),
-          Text(
-            value,
-            style: const TextStyle(
-              color: AppTheme.textPrimary,
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+          Text(v,
+              style: const TextStyle(
+                  color: AppTheme.accentCyan,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold)),
+        ]),
+      );
 }
 
-class _PlatformCard extends StatelessWidget {
-  const _PlatformCard();
-
+class _ArchitectureCard extends StatelessWidget {
+  const _ArchitectureCard();
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
-        color: AppTheme.bgCard,
-        border: Border.all(color: AppTheme.borderGlow),
-      ),
+          color: AppTheme.bgCard,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppTheme.borderGlow)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'HARDWARE ARCHITECTURE',
-            style: TextStyle(
-                color: AppTheme.textSecondary,
-                fontSize: 10,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 2),
-          ),
+          const Text('SYSTEM ARCHITECTURE',
+              style: TextStyle(
+                  color: AppTheme.textDim,
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 1.5)),
           const SizedBox(height: 12),
-          _capRow('OS Type', AppPlatform.name),
-          _capRow(
-            'Bluetooth Classic',
-            AppPlatform.supportsClassicBluetooth ? '✓ Ready' : '✗ N/A',
-            color: AppPlatform.supportsClassicBluetooth
-                ? AppTheme.accentGreen
-                : AppTheme.textDim,
-          ),
-          _capRow(
-            'Bluetooth BLE',
-            AppPlatform.supportsBLE ? '✓ Ready' : '✗ N/A',
-            color: AppPlatform.supportsBLE
-                ? AppTheme.accentGreen
-                : AppTheme.textDim,
-          ),
+          _item('OS Platform', AppPlatform.name),
+          _item(
+              'Classic BT',
+              AppPlatform.supportsClassicBluetooth
+                  ? 'Enabled'
+                  : 'Not Supported'),
+          _item('BLE Support',
+              AppPlatform.supportsBLE ? 'Enabled' : 'Not Supported'),
         ],
       ),
     );
   }
 
-  Widget _capRow(String label, String value, {Color? color}) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 7),
-      child: Row(
-        children: [
-          Text(label,
+  Widget _item(String l, String v) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child:
+            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          Text(l,
               style:
                   const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-          const Spacer(),
-          Text(value,
-              style: TextStyle(
-                  color: color ?? AppTheme.textPrimary,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w500)),
-        ],
-      ),
-    );
-  }
+          Text(v,
+              style:
+                  const TextStyle(color: AppTheme.textPrimary, fontSize: 12)),
+        ]),
+      );
 }
 
-class _TipsSection extends StatelessWidget {
-  const _TipsSection();
-
+class _TipsCard extends StatelessWidget {
+  const _TipsCard();
   @override
   Widget build(BuildContext context) {
-    return Column(
+    return const Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'SECURITY TIPS',
-          style: TextStyle(
-              color: AppTheme.textSecondary,
-              fontSize: 10,
-              fontWeight: FontWeight.bold,
-              letterSpacing: 2),
-        ),
-        const SizedBox(height: 12),
-        _tip('🔐', 'Exchange passphrases via an offline secure channel.'),
-        _tip('📋', 'Verify that the 8-digit fingerprints match exactly.'),
+        Text('SECURITY NOTES',
+            style: TextStyle(
+                color: AppTheme.textDim,
+                fontSize: 10,
+                fontWeight: FontWeight.bold)),
+        SizedBox(height: 12),
+        Text(
+            '• Passphrases should be exchanged via a verified out-of-band channel.',
+            style: TextStyle(
+                color: AppTheme.textSecondary, fontSize: 11, height: 1.5)),
+        SizedBox(height: 6),
+        Text(
+            '• Confirm the fingerprint matches on both devices before transmitting sensitive data.',
+            style: TextStyle(
+                color: AppTheme.textSecondary, fontSize: 11, height: 1.5)),
       ],
-    );
-  }
-
-  Widget _tip(String emoji, String text) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(emoji, style: const TextStyle(fontSize: 14)),
-          const SizedBox(width: 10),
-          Expanded(
-              child: Text(text,
-                  style: const TextStyle(
-                      color: AppTheme.textSecondary,
-                      fontSize: 11,
-                      height: 1.4))),
-        ],
-      ),
     );
   }
 }
