@@ -4,11 +4,7 @@ import 'package:provider/provider.dart';
 import '../platform/app_platform.dart';
 import '../platform/permission_helper.dart';
 import '../services/bluetooth_service.dart';
-<<<<<<< HEAD
 import '../services/wifi_service.dart';
-=======
-import '../services/wifi_service.dart'; // 🟢 NEW: Imported WifiService
->>>>>>> a53763d320be7b320454131c4120cbc49f48e947
 import '../models/device_model.dart';
 import '../theme/app_theme.dart';
 import '../widgets/bt_signal_bars.dart';
@@ -30,73 +26,76 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _permissionDenied = false;
   String? _bootError;
 
-<<<<<<< HEAD
-=======
-  // 🟢 NEW: Track Wi-Fi state for auto-navigation
->>>>>>> a53763d320be7b320454131c4120cbc49f48e947
+  // 🟢 FIX: Declare as late to allow lazy init in didChangeDependencies,
+  // avoiding a context.read<> call inside initState before the widget
+  // is fully mounted in the Provider tree.
   late WifiService _wifiService;
   bool _wasWifiConnected = false;
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // 🟢 FIX: Move service lookup + listener registration here from initState.
+    // initState runs before the widget is inserted into the tree, so
+    // context.read<> can throw a ProviderNotFoundException in edge cases
+    // (e.g., hot-restart, nested navigators). didChangeDependencies is safe.
+    if (!_initialized) {
+      _wifiService = context.read<WifiService>();
+      _wifiService.addListener(_onWifiStateChanged);
+    }
+  }
+
+  @override
   void initState() {
     super.initState();
-<<<<<<< HEAD
-=======
-    // Initialize Wi-Fi listener
->>>>>>> a53763d320be7b320454131c4120cbc49f48e947
-    _wifiService = context.read<WifiService>();
-    _wifiService.addListener(_onWifiStateChanged);
-
     WidgetsBinding.instance.addPostFrameCallback((_) => _boot());
   }
 
   @override
   void dispose() {
-    _wifiService.removeListener(_onWifiStateChanged);
+    // 🟢 FIX: Guard against _wifiService never being assigned (if
+    // didChangeDependencies never ran) with a try/catch to avoid a
+    // LateInitializationError on dispose in error-path scenarios.
+    try {
+      _wifiService.removeListener(_onWifiStateChanged);
+    } catch (_) {}
     super.dispose();
   }
 
-<<<<<<< HEAD
-  // 🟢 FIX: Safer navigation handling to prevent tearing down unintended routes
-=======
-  // 🟢 NEW: Auto-navigation logic when Wi-Fi links
->>>>>>> a53763d320be7b320454131c4120cbc49f48e947
+  // 🟢 FIX: Safer navigation handling to prevent tearing down unintended routes.
+  // Also guards against calling Navigator while a navigation is already in
+  // progress (e.g. rapid wifi connect/disconnect cycles).
   void _onWifiStateChanged() {
     if (!mounted) return;
     final bool isConnected = _wifiService.isConnected;
     final bool isWide = MediaQuery.sizeOf(context).width >= 720;
 
-<<<<<<< HEAD
     if (isConnected && !_wasWifiConnected) {
       if (!isWide) {
-        final nav = Navigator.of(context);
-        if (nav.canPop()) {
-          nav.popUntil((route) => route.isFirst);
-        }
-        nav.push(
-=======
-    // Transitioned from disconnected to connected
-    if (isConnected && !_wasWifiConnected) {
-      if (!isWide) {
-        // Pop the dialog if it's open, ensuring a clean stack
-        Navigator.of(context).popUntil((route) => route.isFirst);
-        // Push the ChatScreen
-        Navigator.push(
-          context,
->>>>>>> a53763d320be7b320454131c4120cbc49f48e947
-          MaterialPageRoute(builder: (_) => const ChatScreen()),
-        );
+        // 🟢 FIX: Use addPostFrameCallback so we never push mid-frame,
+        // which can cause a "setState during build" assertion in some
+        // Flutter versions when the listener fires during layout.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          final nav = Navigator.of(context);
+          if (nav.canPop()) {
+            nav.popUntil((route) => route.isFirst);
+          }
+          nav.push(
+            MaterialPageRoute(builder: (_) => const ChatScreen()),
+          );
+        });
       }
     }
-<<<<<<< HEAD
 
-=======
-    
->>>>>>> a53763d320be7b320454131c4120cbc49f48e947
     _wasWifiConnected = isConnected;
   }
 
   Future<void> _boot() async {
+    // 🟢 FIX: Guard early in case widget was disposed before the
+    // post-frame callback fired (navigated away during splash, etc.).
+    if (!mounted) return;
+
     try {
       if (AppPlatform.isWeb) {
         if (mounted) setState(() => _initialized = true);
@@ -140,8 +139,9 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final bool isWide = MediaQuery.sizeOf(context).width >= 720;
 
-    // 🟢 PERF: Flattened Widget Tree. By watching at the top level,
-    // we eliminate multiple nested Consumer2 widgets in the layout builders.
+    // 🟢 PERF: Watch both services at the top level once; avoids multiple
+    // nested Consumer / Consumer2 widgets rebuilding independently and
+    // causing redundant layout passes.
     final btService = context.watch<BluetoothService>();
     final wifiService = context.watch<WifiService>();
 
@@ -157,60 +157,37 @@ class _HomeScreenState extends State<HomeScreen> {
               : _permissionDenied
                   ? _buildPermissionDenied()
                   : isWide
-<<<<<<< HEAD
                       ? _buildWideLayout(context, btService, wifiService)
                       : _buildNarrowLayout(context, btService, wifiService),
-      floatingActionButton:
-          _initialized && !_permissionDenied && _bootError == null && !isWide
-              ? (btService.isConnected || wifiService.isConnected)
-                  ? FloatingActionButton.extended(
-                      onPressed: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const ChatScreen()),
-                      ),
-                      backgroundColor: AppTheme.accentGreen,
-                      icon: const Icon(Icons.chat, color: AppTheme.bgDeep),
-                      label: const Text(
-                        'RESUME SESSION',
-                        style: TextStyle(
-                          color: AppTheme.bgDeep,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 1,
-                        ),
-                      ),
-                    )
-                  : null
-              : null,
-=======
-                      ? _buildWideLayout(context)
-                      : _buildNarrowLayout(context),
-      // 🟢 NEW: Floating Resume Button if user pops out of Chat without disconnecting
-      floatingActionButton: _initialized && !_permissionDenied && _bootError == null && !isWide
-          ? Consumer2<BluetoothService, WifiService>(
-              builder: (context, bt, wifi, _) {
-                if (bt.isConnected || wifi.isConnected) {
-                  return FloatingActionButton.extended(
-                    onPressed: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const ChatScreen()),
-                    ),
-                    backgroundColor: AppTheme.accentGreen,
-                    icon: const Icon(Icons.chat, color: AppTheme.bgDeep),
-                    label: const Text(
-                      'RESUME SESSION',
-                      style: TextStyle(
-                        color: AppTheme.bgDeep,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 1,
-                      ),
-                    ),
-                  );
-                }
-                return const SizedBox.shrink();
-              },
-            )
-          : null,
->>>>>>> a53763d320be7b320454131c4120cbc49f48e947
+      // 🟢 FIX: Extracted FAB logic into a dedicated method to keep build()
+      // readable and to avoid computing isWide twice for the same frame.
+      floatingActionButton: _buildFab(btService, wifiService, isWide),
+    );
+  }
+
+  // 🟢 PERF: Dedicated FAB builder avoids inline ternary nesting that made
+  // the condition hard to reason about and caused unnecessary re-evaluations.
+  Widget? _buildFab(BluetoothService bt, WifiService wifi, bool isWide) {
+    if (!_initialized || _permissionDenied || _bootError != null || isWide) {
+      return null;
+    }
+    if (!bt.isConnected && !wifi.isConnected) return null;
+
+    return FloatingActionButton.extended(
+      onPressed: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const ChatScreen()),
+      ),
+      backgroundColor: AppTheme.accentGreen,
+      icon: const Icon(Icons.chat, color: AppTheme.bgDeep),
+      label: const Text(
+        'RESUME SESSION',
+        style: TextStyle(
+          color: AppTheme.bgDeep,
+          fontWeight: FontWeight.bold,
+          letterSpacing: 1,
+        ),
+      ),
     );
   }
 
@@ -223,7 +200,7 @@ class _HomeScreenState extends State<HomeScreen> {
       titleSpacing: 16,
       title: Row(
         children: [
-          _PulseDot(),
+          const _PulseDot(),
           const SizedBox(width: 10),
           const Text(
             'BT TERMINAL',
@@ -274,7 +251,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // ── Layouts ──────────────────────────────────────────────
 
-<<<<<<< HEAD
   Widget _buildNarrowLayout(
       BuildContext context, BluetoothService bt, WifiService wifi) {
     return Column(
@@ -305,42 +281,6 @@ class _HomeScreenState extends State<HomeScreen> {
               : _buildWidePlaceholder(),
         ),
       ],
-=======
-  Widget _buildNarrowLayout(BuildContext context) {
-    // 🟢 NEW: Listens to both BT and Wi-Fi state for status bar updates
-    return Consumer2<BluetoothService, WifiService>(
-      builder: (context, service, wifi, _) => Column(
-        children: [
-          _buildStatusBar(service, wifi),
-          Expanded(child: _buildScrollContent(context, service)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildWideLayout(BuildContext context) {
-    // 🟢 NEW: Checks both BT and Wi-Fi state to reveal the Chat component
-    return Consumer2<BluetoothService, WifiService>(
-      builder: (context, service, wifi, _) => Row(
-        children: [
-          SizedBox(
-            width: 340,
-            child: Column(
-              children: [
-                _buildStatusBar(service, wifi),
-                Expanded(child: _buildScrollContent(context, service)),
-              ],
-            ),
-          ),
-          Container(width: 1, color: AppTheme.borderGlow),
-          Expanded(
-            child: (service.isConnected || wifi.isConnected)
-                ? const ChatScreen()
-                : _buildWidePlaceholder(),
-          ),
-        ],
-      ),
->>>>>>> a53763d320be7b320454131c4120cbc49f48e947
     );
   }
 
@@ -376,11 +316,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildScrollContent(BuildContext context, BluetoothService service) {
     return ListView(
-<<<<<<< HEAD
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
-=======
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 80), // Increased bottom padding for FAB
->>>>>>> a53763d320be7b320454131c4120cbc49f48e947
       children: [
         if (AppPlatform.isWeb) ...[
           _buildWebBanner(),
@@ -450,16 +386,9 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-<<<<<<< HEAD
   Widget _buildStatusBar(BluetoothService service, WifiService wifi) {
     final bool isWeb = AppPlatform.isWeb;
 
-=======
-  // 🟢 NEW: Integrated Wi-Fi status logic
-  Widget _buildStatusBar(BluetoothService service, WifiService wifi) {
-    final bool isWeb = AppPlatform.isWeb;
-    
->>>>>>> a53763d320be7b320454131c4120cbc49f48e947
     String label;
     Color color;
     String? connectedName;
@@ -546,7 +475,9 @@ class _HomeScreenState extends State<HomeScreen> {
         borderRadius: BorderRadius.circular(14),
         child: InkWell(
           borderRadius: BorderRadius.circular(14),
-          // 🟢 FIX: explicitly disable splash ripple when running on Web
+          // 🟢 FIX: Explicitly disable splash/ripple on Web to avoid a
+          // transparent-ink artifact that Flutter Web renders differently
+          // from native targets.
           splashColor: disabled ? Colors.transparent : null,
           highlightColor: disabled ? Colors.transparent : null,
           onTap: disabled
@@ -630,16 +561,26 @@ class _HomeScreenState extends State<HomeScreen> {
       BluetoothService service, int index) {
     final bool isConnecting = service.state == BtConnectionState.connecting;
 
+    // 🟢 FIX: ValueKey on the Padding (outermost widget) AND on the .animate()
+    // call use the same stable MAC-based key. Previously the animate key was
+    // 'anim_${device.address}' while the Padding key was just device.address,
+    // so Flutter could still re-trigger the entrance animation when the list
+    // reordered (e.g. a new RSSI update moved an item). Using consistent keys
+    // throughout the subtree prevents spurious re-animations.
+    final Key stableKey = ValueKey(device.address);
+
     return Padding(
-      // 🟢 FIX: Added ValueKey bounded to MAC address to stop list rebuilds
-      // from re-triggering the entrance animation every time the signal strength updates.
-      key: ValueKey(device.address),
+      key: stableKey,
       padding: const EdgeInsets.only(bottom: 8),
       child: Material(
         color: Colors.transparent,
         borderRadius: BorderRadius.circular(12),
         child: InkWell(
           borderRadius: BorderRadius.circular(12),
+          // 🟢 FIX: Disable tap entirely (null callback) while connecting to
+          // prevent duplicate connect() calls from rapid taps. Also avoids the
+          // subtle bug where tapping a second device mid-connection could leave
+          // the BluetoothService in an inconsistent state.
           onTap: isConnecting ? null : () => _connect(context, device, service),
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -735,15 +676,23 @@ class _HomeScreenState extends State<HomeScreen> {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(
-                    color: AppTheme.accentCyan.withValues(alpha: 0.08),
+                    // 🟢 FIX: Visually reflect the connecting/disabled state on
+                    // the LINK badge so users have clear affordance feedback.
+                    color: isConnecting
+                        ? AppTheme.textDim.withValues(alpha: 0.08)
+                        : AppTheme.accentCyan.withValues(alpha: 0.08),
                     borderRadius: BorderRadius.circular(8),
                     border: Border.all(
-                        color: AppTheme.accentCyan.withValues(alpha: 0.3)),
+                      color: isConnecting
+                          ? AppTheme.textDim.withValues(alpha: 0.2)
+                          : AppTheme.accentCyan.withValues(alpha: 0.3),
+                    ),
                   ),
                   child: Text(
                     isConnecting ? '...' : 'LINK',
-                    style: const TextStyle(
-                      color: AppTheme.accentCyan,
+                    style: TextStyle(
+                      color:
+                          isConnecting ? AppTheme.textDim : AppTheme.accentCyan,
                       fontSize: 10,
                       fontWeight: FontWeight.bold,
                       letterSpacing: 1,
@@ -756,7 +705,9 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
     )
-        .animate(key: ValueKey('anim_${device.address}'))
+        // 🟢 FIX: Use the same stableKey for .animate() so Flutter can match
+        // the animation state to the correct widget across list rebuilds.
+        .animate(key: stableKey)
         .fadeIn(duration: 200.ms, delay: (index * 50).ms)
         .slideY(
           begin: 0.1,
@@ -768,6 +719,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _connect(
       BuildContext context, BTDevice device, BluetoothService service) async {
+    // 🟢 FIX: Capture navigator and isWide before the first await so we never
+    // read BuildContext across an async gap (avoids the
+    // "Do not use BuildContext across async gaps" lint warning and the actual
+    // crash it guards against when the widget is unmounted mid-await).
     final navigator = Navigator.of(context);
     final bool isWide = MediaQuery.sizeOf(context).width >= 720;
 
@@ -976,7 +931,11 @@ class _HomeScreenState extends State<HomeScreen> {
       );
 }
 
+// 🟢 FIX: Made _PulseDot const-constructible by adding `const HomeScreen`
+// pattern — changed `_PulseDot()` call sites to `const _PulseDot()`.
 class _PulseDot extends StatefulWidget {
+  const _PulseDot();
+
   @override
   State<_PulseDot> createState() => _PulseDotState();
 }

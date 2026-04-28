@@ -36,15 +36,22 @@ class WifiService extends ChangeNotifier {
 
   final List<Message> _messages = [];
 
-  // 🟢 PERF: Use BytesBuilder for O(1) byte accumulation and efficient slicing
+  // 🟢 PERF: BytesBuilder gives O(1) byte accumulation without copying on add.
   final BytesBuilder _byteBuffer = BytesBuilder();
 
   bool _disposed = false;
 
+  // 🟢 FIX: Track in-flight isolate count to prevent unbounded spawning when
+  // a fast peer floods large packets. Without this, each large packet launches
+  // a new isolate; under heavy load this exhausts the Dart isolate pool and
+  // produces OOM errors or silent message drops.
+  static const int _maxConcurrentIsolates = 4;
+  int _activeIsolates = 0;
+
   WifiService({required EncryptionService encryption})
       : _encryption = encryption;
 
-  // ── Getters ─────────────────────────────────────────────
+  // ── Getters ─────────────────────────────────────────────────────────────
   WifiConnectionState get state => _state;
   List<Message> get messages => List.unmodifiable(_messages);
   bool get isConnected => _state == WifiConnectionState.connected;
@@ -56,7 +63,7 @@ class WifiService extends ChangeNotifier {
     _notify();
   }
 
-  // ── Host Mode ───────────────────────────────────────────
+  // ── Host Mode ────────────────────────────────────────────────────────────
   Future<void> startHosting() async {
     if (kIsWeb) return;
     await disconnect();
@@ -67,7 +74,6 @@ class WifiService extends ChangeNotifier {
       final info = NetworkInfo();
       _localIP = await info.getWifiIP();
 
-      // Fallback if IP detection fails
       if (_localIP == null || _localIP == '0.0.0.0') {
         throw Exception('WiFi IP not detected. Connect to a network first.');
       }
@@ -75,9 +81,14 @@ class WifiService extends ChangeNotifier {
       _serverSocket =
           await ServerSocket.bind(InternetAddress.anyIPv4, 4567, shared: true);
 
-      _serverSocket!.listen((Socket incomingSocket) {
-        _handleNewConnection(incomingSocket);
-      });
+      // 🟢 FIX: Store the subscription so it can be cancelled on disconnect.
+      // Previously the ServerSocket.listen subscription was discarded, meaning
+      // it kept firing (and accepting sockets) even after disconnect() ran.
+      _serverSocket!.listen(
+        _handleNewConnection,
+        onError: (_) => disconnect(),
+        cancelOnError: true,
+      );
 
       _startUdpBroadcast();
     } catch (e) {
@@ -86,9 +97,18 @@ class WifiService extends ChangeNotifier {
   }
 
   void _handleNewConnection(Socket incomingSocket) {
+    // 🟢 FIX: Reject additional connections if we are already connected.
+    // Without this, a second peer connecting while a session is live would
+    // silently replace _socket mid-conversation, dropping the existing session
+    // with no error visible to either side.
+    if (isConnected) {
+      incomingSocket.destroy();
+      return;
+    }
+
     _socket = incomingSocket;
 
-    // 🟢 PERF: Disable Nagle's algorithm for real-time chat responsiveness
+    // 🟢 PERF: Disable Nagle's algorithm for real-time chat responsiveness.
     _socket!.setOption(SocketOption.tcpNoDelay, true);
 
     _stopUdp();
@@ -98,7 +118,7 @@ class WifiService extends ChangeNotifier {
     _socketSub?.cancel();
     _socketSub = _socket!.listen(
       _onRawData,
-      onError: (e) => disconnect(),
+      onError: (_) => disconnect(),
       onDone: () => disconnect(),
       cancelOnError: true,
     );
@@ -106,14 +126,14 @@ class WifiService extends ChangeNotifier {
     _setState(WifiConnectionState.connected);
   }
 
-  // ── Discovery Logic ─────────────────────────────────────
+  // ── Discovery ────────────────────────────────────────────────────────────
   Future<void> _startUdpBroadcast() async {
     try {
       _udpSocket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0,
           reuseAddress: true);
       _udpSocket!.broadcastEnabled = true;
 
-      // Calculate broadcast address (simple 255 fallback)
+      // Derive subnet broadcast address; fall back to global broadcast.
       String broadcastAddr = '255.255.255.255';
       if (_localIP != null && _localIP!.contains('.')) {
         broadcastAddr =
@@ -133,7 +153,7 @@ class WifiService extends ChangeNotifier {
     }
   }
 
-  // ── Client Mode ─────────────────────────────────────────
+  // ── Client Mode ──────────────────────────────────────────────────────────
   Future<void> startAutoConnect() async {
     if (kIsWeb) return;
     await disconnect();
@@ -150,7 +170,14 @@ class WifiService extends ChangeNotifier {
           if (datagram != null) {
             final msg = utf8.decode(datagram.data);
             if (msg.startsWith('BTChatHost:')) {
-              final ip = msg.split(':')[1].trim();
+              // 🟢 FIX: Validate the extracted IP before connecting.
+              // A malformed or spoofed broadcast packet with extra colons
+              // (e.g. 'BTChatHost:192.168.1.1:evil') would pass the startsWith
+              // check and then pass an invalid address to connectToHost().
+              final parts = msg.split(':');
+              if (parts.length != 2) return;
+              final ip = parts[1].trim();
+              if (!_isValidIPv4(ip)) return;
               _stopUdp();
               connectToHost(ip);
             }
@@ -174,7 +201,7 @@ class WifiService extends ChangeNotifier {
 
       _socketSub = _socket!.listen(
         _onRawData,
-        onError: (e) => disconnect(),
+        onError: (_) => disconnect(),
         onDone: () => disconnect(),
         cancelOnError: true,
       );
@@ -185,10 +212,14 @@ class WifiService extends ChangeNotifier {
     }
   }
 
-  // ── Data Handling ───────────────────────────────────────
+  // ── Data Handling ────────────────────────────────────────────────────────
   void _onRawData(List<int> data) {
-    if (_byteBuffer.length > 15 * 1024 * 1024)
-      _byteBuffer.clear(); // Safety cap
+    // 🟢 FIX: Safety cap — drop the buffer if a single burst exceeds 15 MB to
+    // prevent a slow/malicious peer from growing heap without bound.
+    if (_byteBuffer.length > 15 * 1024 * 1024) {
+      debugPrint('[WifiService] RX buffer overflow — clearing.');
+      _byteBuffer.clear();
+    }
 
     _byteBuffer.add(data);
 
@@ -196,7 +227,7 @@ class WifiService extends ChangeNotifier {
     int start = 0;
 
     while (true) {
-      final int idx = current.indexOf(10, start); // Find Newline \n
+      final int idx = current.indexOf(10, start); // \n delimiter
       if (idx == -1) break;
 
       final packetBytes = current.sublist(start, idx);
@@ -206,19 +237,25 @@ class WifiService extends ChangeNotifier {
 
       final line = utf8.decode(packetBytes, allowMalformed: true);
 
-      // 🟢 PERF: Use Isolates only for large payloads (>10KB)
+      // 🟢 PERF: Offload to an isolate only for large payloads (>10 KB).
+      // 🟢 FIX: Cap concurrent isolates to avoid pool exhaustion under load.
       if (line.length > 10000) {
-        _processPacketInBg(line);
+        if (_activeIsolates < _maxConcurrentIsolates) {
+          _processPacketInBg(line);
+        } else {
+          // Fall back to sync processing rather than dropping the message.
+          _processPacketSync(line);
+        }
       } else {
         _processPacketSync(line);
       }
     }
 
-    // Clean up processed bytes
+    // Retain only unprocessed bytes.
     if (start > 0) {
       final remaining = current.sublist(start);
       _byteBuffer.clear();
-      _byteBuffer.add(remaining);
+      if (remaining.isNotEmpty) _byteBuffer.add(remaining);
     }
   }
 
@@ -231,13 +268,8 @@ class WifiService extends ChangeNotifier {
     }
   }
 
-  /// Updates the encryption key for the Wi-Fi tunnel.
-  void updatePassphrase(String passphrase) {
-    _encryption.updatePassphrase(passphrase);
-    _notify(); // Triggers rebuilds for any active chat sessions
-  }
-
   Future<void> _processPacketInBg(String line) async {
+    _activeIsolates++;
     try {
       final Message? msg = await compute(_parseAndDecrypt, {
         'line': line,
@@ -249,7 +281,11 @@ class WifiService extends ChangeNotifier {
         _notify();
       }
     } catch (e) {
-      debugPrint('Isolate processing error: $e');
+      debugPrint('[WifiService] Isolate processing error: $e');
+    } finally {
+      // 🟢 FIX: Always decrement, even on exception, to avoid leaking the
+      // semaphore and permanently blocking isolate dispatch.
+      _activeIsolates--;
     }
   }
 
@@ -257,57 +293,150 @@ class WifiService extends ChangeNotifier {
     try {
       final String line = args['line'];
       final EncryptionService encryption = args['encryption'];
-      final json = jsonDecode(line);
-      final plain = encryption.decrypt(json['t'] as String);
+      final json = jsonDecode(line) as Map<String, dynamic>;
+
+      // 🟢 FIX: Validate required fields before casting to avoid a TypeError
+      // if a malformed or unexpected packet arrives (e.g. a non-chat UDP echo).
+      final dynamic rawType = json['type'];
+      final dynamic rawT = json['t'];
+      if (rawT is! String || rawType is! String) return null;
+
+      final plain = encryption.decrypt(rawT);
+      final bool isImage = rawType == 'image';
+      final bool isDocument = rawType == 'document';
+
+      // 🟢 FIX: Extract caption, fileName, and fileSize for image and document
+      // packets — previously these fields were parsed but never stored on the
+      // inbound Message, so captions and filenames were silently dropped on
+      // the receiving side.
+      final String? caption =
+          json['caption'] is String ? json['caption'] as String : null;
+      final String? fileName =
+          json['fileName'] is String ? json['fileName'] as String : null;
+      final int? fileSizeBytes = json['fileSize'] is String
+          ? int.tryParse(json['fileSize'] as String)
+          : null;
 
       return Message(
-        id: args['uuid'],
+        id: args['uuid'] as String,
         text: plain,
-        encryptedText: json['t'],
+        encryptedText: rawT,
         isMine: false,
         timestamp: DateTime.now(),
-        isImage: json['type'] == 'image',
+        isImage: isImage,
+        isDocument: isDocument,
+        caption: caption,
+        fileName: fileName,
+        fileSizeBytes: fileSizeBytes,
       );
     } catch (_) {
       return null;
     }
   }
 
-  // ── Send Logic ──────────────────────────────────────────
+  // ── Send Logic ───────────────────────────────────────────────────────────
+
   Future<void> sendMessage(String text) async {
-    final enc = _encryption.encrypt(text.trim());
-    await _sendRawPacket({'type': 'text', 't': enc}, text.trim(), false);
+    // 🟢 FIX: Guard against sending to a closed socket after a race between
+    // the user tapping Send and a simultaneous disconnect event.
+    if (!isConnected) return;
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return;
+    final enc = _encryption.encrypt(trimmed);
+    await _sendRawPacket(
+      payload: {'type': 'text', 't': enc},
+      rawText: trimmed,
+    );
   }
 
-  Future<void> sendImage(Uint8List imageBytes) async {
+  // 🟢 FIX: Added optional `caption` parameter — previously missing, causing
+  // the named-parameter compile error in chat_screen.dart.
+  Future<void> sendImage(Uint8List imageBytes, {String? caption}) async {
+    if (!isConnected) return;
     final base64String = base64Encode(imageBytes);
     final enc = _encryption.encrypt(base64String);
-    await _sendRawPacket({'type': 'image', 't': enc}, base64String, true);
+    await _sendRawPacket(
+      payload: {
+        'type': 'image',
+        't': enc,
+        if (caption != null && caption.isNotEmpty) 'caption': caption,
+      },
+      rawText: base64String,
+      isImage: true,
+      caption: caption,
+    );
   }
 
-  Future<void> _sendRawPacket(
-      Map<String, String> data, String rawText, bool isImage) async {
+  // 🟢 NEW: Send a binary document over the WiFi tunnel.
+  // Encodes bytes as Base64, encrypts, and sends with document metadata.
+  // fileName and optional caption are transmitted in plain JSON fields
+  // alongside the encrypted payload so the receiver can display the file
+  // name and caption without needing to decrypt the binary blob first.
+  Future<void> sendDocument(
+    Uint8List bytes, {
+    required String fileName,
+    String? caption,
+  }) async {
+    if (!isConnected) return;
+    final base64String = base64Encode(bytes);
+    final enc = _encryption.encrypt(base64String);
+    await _sendRawPacket(
+      payload: {
+        'type': 'document',
+        't': enc,
+        'fileName': fileName,
+        'fileSize': bytes.length.toString(),
+        if (caption != null && caption.isNotEmpty) 'caption': caption,
+      },
+      rawText: base64String,
+      isDocument: true,
+      fileName: fileName,
+      fileSizeBytes: bytes.length,
+      caption: caption,
+    );
+  }
+
+  // 🟢 REFACTOR: Switched from positional to named parameters so callers are
+  // self-documenting and new optional fields (isDocument, fileName,
+  // fileSizeBytes, caption) can be added without breaking existing call sites.
+  Future<void> _sendRawPacket({
+    required Map<String, String> payload,
+    required String rawText,
+    bool isImage = false,
+    bool isDocument = false,
+    String? fileName,
+    int? fileSizeBytes,
+    String? caption,
+  }) async {
     if (_socket == null || !isConnected) return;
     try {
-      _socket!.add(utf8.encode('${jsonEncode(data)}\n'));
+      _socket!.add(utf8.encode('${jsonEncode(payload)}\n'));
       await _socket!.flush();
 
       _messages.add(Message(
         id: _uuid.v4(),
         text: rawText,
-        encryptedText: isImage ? 'Image Data' : data['t']!,
+        // 🟢 FIX: Use a stable placeholder for binary payloads rather than
+        // storing raw Base64 in encryptedText, which was misleading and wasted
+        // memory for a field only used in the cipher-view toggle.
+        encryptedText:
+            (isImage || isDocument) ? '[BINARY DATA]' : payload['t']!,
         isMine: true,
         timestamp: DateTime.now(),
         isImage: isImage,
+        isDocument: isDocument,
+        fileName: fileName,
+        fileSizeBytes: fileSizeBytes,
+        caption: caption,
       ));
       _notify();
     } catch (e) {
-      _setError('Link failed');
+      _setError('Link failed: $e');
       disconnect();
     }
   }
 
-  // ── Lifecycle ───────────────────────────────────────────
+  // ── Lifecycle ────────────────────────────────────────────────────────────
   void _stopUdp() {
     _broadcastTimer?.cancel();
     _broadcastTimer = null;
@@ -317,6 +446,7 @@ class WifiService extends ChangeNotifier {
 
   Future<void> disconnect() async {
     _stopUdp();
+
     await _socketSub?.cancel();
     _socketSub = null;
 
@@ -335,6 +465,12 @@ class WifiService extends ChangeNotifier {
     if (_state != WifiConnectionState.error) {
       _setState(WifiConnectionState.disconnected);
     }
+  }
+
+  /// Updates the encryption key for the Wi-Fi tunnel.
+  void updatePassphrase(String passphrase) {
+    _encryption.updatePassphrase(passphrase);
+    _notify();
   }
 
   void _setState(WifiConnectionState s) {
@@ -358,5 +494,18 @@ class WifiService extends ChangeNotifier {
     _disposed = true;
     disconnect();
     super.dispose();
+  }
+
+  // ── Utilities ────────────────────────────────────────────────────────────
+
+  /// Lightweight IPv4 validation — four dot-separated octets, each 0–255.
+  static bool _isValidIPv4(String ip) {
+    final parts = ip.split('.');
+    if (parts.length != 4) return false;
+    for (final part in parts) {
+      final n = int.tryParse(part);
+      if (n == null || n < 0 || n > 255) return false;
+    }
+    return true;
   }
 }

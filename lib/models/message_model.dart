@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'dart:typed_data';
 import 'package:hive/hive.dart';
 
 part 'message_model.g.dart';
@@ -7,7 +9,6 @@ class Message extends HiveObject {
   @HiveField(0)
   final String id;
 
-  /// Stores the decrypted text OR the Base64 string for images.
   @HiveField(1)
   final String text;
 
@@ -26,6 +27,19 @@ class Message extends HiveObject {
   @HiveField(6)
   final bool isImage;
 
+  // ── New fields (HiveFields 7-9) ──────────────────────────────────────────
+  @HiveField(7)
+  final bool isDocument;
+
+  @HiveField(8)
+  final String? caption;
+
+  @HiveField(9)
+  final String? fileName;
+
+  @HiveField(10)
+  final int? fileSizeBytes;
+
   Message({
     required this.id,
     required this.text,
@@ -34,55 +48,71 @@ class Message extends HiveObject {
     required this.timestamp,
     this.isDecryptionError = false,
     this.isImage = false,
+    this.isDocument = false,
+    this.caption,
+    this.fileName,
+    this.fileSizeBytes,
   });
 
-  // 🟢 PERF: Pre-calculated and cached to prevent expensive padding
-  // operations during ListView scrolling.
+  // ── Derived / cached properties ─────────────────────────────────────────
+
+  Uint8List? _cachedBytes;
+  Uint8List? get imageBytes {
+    if (!isImage || text.isEmpty) return null;
+    if (_cachedBytes != null) return _cachedBytes;
+    try {
+      return _cachedBytes = base64Decode(text);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Human-readable file size label for document bubbles.
+  // 🟢 PERF: `late final` — computed once on first access.
+  late final String? fileSizeLabel = () {
+    final n = fileSizeBytes;
+    if (n == null) return null;
+    if (n < 1024) return '${n}B';
+    if (n < 1024 * 1024) return '${(n / 1024).toStringAsFixed(1)}KB';
+    return '${(n / (1024 * 1024)).toStringAsFixed(1)}MB';
+  }();
+
   late final String timeString = () {
     final h = timestamp.hour.toString().padLeft(2, '0');
     final m = timestamp.minute.toString().padLeft(2, '0');
     return '$h:$m';
   }();
 
-  /// 🟢 PERF: Returns a safe, short preview.
-  /// Prevents UI jank when displaying logs that contain large Base64 image data.
-  String get previewText {
-    if (isImage) return '[SECURE IMAGE DATA]';
-    if (isDecryptionError) return '[DECRYPTION FAILURE]';
-    return text.length > 50 ? '${text.substring(0, 50)}...' : text;
-  }
-
-  /// DST-safe date label: 'Today', 'Yesterday', or DD/MM/YYYY.
-  String get dateString {
+  late final String dateString = () {
     final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final msgDay = DateTime(timestamp.year, timestamp.month, timestamp.day);
 
-    // Fast path: Check year first
-    if (timestamp.year != now.year) {
-      return _formatDate(timestamp);
-    }
+    if (msgDay == today) return 'Today';
+    if (msgDay == today.subtract(const Duration(days: 1))) return 'Yesterday';
+    return _formatDate(timestamp, includeYear: timestamp.year != now.year);
+  }();
 
-    if (timestamp.month == now.month && timestamp.day == now.day) {
-      return 'Today';
-    }
-
-    // DST-safe yesterday logic
-    final yesterdayDate = DateTime(now.year, now.month, now.day - 1);
-    if (timestamp.month == yesterdayDate.month &&
-        timestamp.day == yesterdayDate.day) {
-      return 'Yesterday';
-    }
-
-    return _formatDate(timestamp);
-  }
-
-  static String _formatDate(DateTime dt) {
+  static String _formatDate(DateTime dt, {bool includeYear = false}) {
     final d = dt.day.toString().padLeft(2, '0');
     final m = dt.month.toString().padLeft(2, '0');
-    return '$d/$m/${dt.year}';
+    return includeYear ? '$d/$m/${dt.year}' : '$d/$m';
   }
 
-  /// Threshold for GPU-heavy image caching
-  bool get isHeavy => isImage && text.length > 4096;
+  String get previewText {
+    if (isImage) return '[SECURE IMAGE DATA]';
+    // 🟢 FIX: Cover new document type in preview.
+    if (isDocument) return '[SECURE FILE: ${fileName ?? 'document'}]';
+    if (isDecryptionError) return '[DECRYPTION FAILURE]';
+    if (text.length <= 50) return text;
+    final runes = text.runes.toList();
+    if (runes.length <= 50) return text;
+    return '${String.fromCharCodes(runes.take(50))}...';
+  }
+
+  bool get isHeavy => isImage && text.length > 20000;
+
+  // ── Equality & hashing ───────────────────────────────────────────────────
 
   @override
   bool operator ==(Object other) =>
@@ -90,11 +120,25 @@ class Message extends HiveObject {
       other is Message &&
           runtimeType == other.runtimeType &&
           id == other.id &&
-          isImage == other.isImage && // 🟢 FIX: Include type in equality
-          isDecryptionError == other.isDecryptionError;
+          text == other.text &&
+          isImage == other.isImage &&
+          // 🟢 FIX: Include new fields in equality check.
+          isDocument == other.isDocument &&
+          isDecryptionError == other.isDecryptionError &&
+          timestamp.millisecondsSinceEpoch ==
+              other.timestamp.millisecondsSinceEpoch;
 
   @override
-  int get hashCode => Object.hash(id, isImage, isDecryptionError);
+  int get hashCode => Object.hash(
+        id,
+        text,
+        isImage,
+        isDocument,
+        isDecryptionError,
+        timestamp.millisecondsSinceEpoch,
+      );
+
+  // ── Mutation helpers ─────────────────────────────────────────────────────
 
   Message copyWith({
     String? id,
@@ -104,6 +148,10 @@ class Message extends HiveObject {
     DateTime? timestamp,
     bool? isDecryptionError,
     bool? isImage,
+    bool? isDocument,
+    String? caption,
+    String? fileName,
+    int? fileSizeBytes,
   }) {
     return Message(
       id: id ?? this.id,
@@ -113,6 +161,10 @@ class Message extends HiveObject {
       timestamp: timestamp ?? this.timestamp,
       isDecryptionError: isDecryptionError ?? this.isDecryptionError,
       isImage: isImage ?? this.isImage,
+      isDocument: isDocument ?? this.isDocument,
+      caption: caption ?? this.caption,
+      fileName: fileName ?? this.fileName,
+      fileSizeBytes: fileSizeBytes ?? this.fileSizeBytes,
     );
   }
 }

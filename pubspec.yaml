@@ -31,6 +31,7 @@ dependencies:
 
   # ── State Management ──────────────────────────────────────────────────
   provider: ^6.1.2
+  file_picker: ^8.0.0
 
   # ── Persistence ───────────────────────────────────────────────────────
   shared_preferences: ^2.2.3

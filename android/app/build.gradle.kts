@@ -51,8 +51,4 @@ android {
 
 flutter {
     source = "../.."
-<<<<<<< HEAD
 }
-=======
-}
->>>>>>> a53763d320be7b320454131c4120cbc49f48e947

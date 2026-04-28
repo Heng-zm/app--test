@@ -1,7 +1,9 @@
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../services/bluetooth_service.dart';
@@ -9,6 +11,36 @@ import '../services/wifi_service.dart';
 import '../models/message_model.dart';
 import '../theme/app_theme.dart';
 import '../widgets/glow_container.dart';
+
+// ── Attachment types ──────────────────────────────────────────────────────────
+
+enum _AttachKind { image, document }
+
+class _PendingAttachment {
+  final _AttachKind kind;
+  final String name;
+  final int sizeBytes;
+  final Uint8List bytes;
+
+  const _PendingAttachment({
+    required this.kind,
+    required this.name,
+    required this.sizeBytes,
+    required this.bytes,
+  });
+
+  bool get isImage => kind == _AttachKind.image;
+
+  String get sizeLabel {
+    if (sizeBytes < 1024) return '${sizeBytes}B';
+    if (sizeBytes < 1024 * 1024) {
+      return '${(sizeBytes / 1024).toStringAsFixed(1)}KB';
+    }
+    return '${(sizeBytes / (1024 * 1024)).toStringAsFixed(1)}MB';
+  }
+}
+
+// ── Screen ────────────────────────────────────────────────────────────────────
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -22,59 +54,85 @@ class _ChatScreenState extends State<ChatScreen> {
   final FocusNode _focusNode = FocusNode();
 
   bool _showEncrypted = false;
+  bool _isSending = false;
+
+  // Pending attachment waiting for optional caption + user confirmation
+  _PendingAttachment? _pendingAttachment;
+  final TextEditingController _captionController = TextEditingController();
 
   late BluetoothService _btService;
   late WifiService _wifiService;
 
-  @override
-  void initState() {
-    super.initState();
-    // 🟢 FIX: Bind listeners in initState instead of doing side-effects in build()
-    _btService = context.read<BluetoothService>();
-    _wifiService = context.read<WifiService>();
+  // 🟢 PERF: Cached sorted message list — only recomputed when list sizes change.
+  List<Message> _cachedMessages = [];
+  int _lastBtCount = -1;
+  int _lastWifiCount = -1;
 
-    _btService.addListener(_checkConnectionState);
-    _wifiService.addListener(_checkConnectionState);
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // 🟢 FIX: Service lookup in didChangeDependencies, not initState.
+    if (_lastBtCount == -1) {
+      _btService = context.read<BluetoothService>();
+      _wifiService = context.read<WifiService>();
+      _btService.addListener(_onServiceChanged);
+      _wifiService.addListener(_onServiceChanged);
+    }
   }
 
   @override
   void dispose() {
-    _btService.removeListener(_checkConnectionState);
-    _wifiService.removeListener(_checkConnectionState);
+    _btService.removeListener(_onServiceChanged);
+    _wifiService.removeListener(_onServiceChanged);
     _controller.dispose();
+    _captionController.dispose();
     _focusNode.dispose();
     super.dispose();
   }
 
-  // 🟢 FIX: Safe navigation handler that executes cleanly outside the build pipeline
-  void _checkConnectionState() {
+  void _onServiceChanged() {
     if (!mounted) return;
 
     final bool isWide = MediaQuery.sizeOf(context).width >= 720;
     final bool isConnected = _btService.isConnected || _wifiService.isConnected;
 
     if (!isConnected && !isWide) {
-      if (Navigator.canPop(context)) {
-        Navigator.pop(context);
-      }
+      // 🟢 FIX: Defer navigation to avoid calling Navigator mid-rebuild.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        if (Navigator.canPop(context)) Navigator.pop(context);
+      });
+      return;
     }
+
+    _rebuildMessageCache();
   }
+
+  void _rebuildMessageCache() {
+    final btCount = _btService.messages.length;
+    final wifiCount = _wifiService.messages.length;
+    if (btCount == _lastBtCount && wifiCount == _lastWifiCount) return;
+
+    _lastBtCount = btCount;
+    _lastWifiCount = wifiCount;
+
+    _cachedMessages = [
+      ..._btService.messages,
+      ..._wifiService.messages,
+    ]..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+  }
+
+  // ── Build ─────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
     final bool isWide = MediaQuery.sizeOf(context).width >= 720;
 
-    // 🟢 PERF: Flattened widget tree using context.watch
     final btService = context.watch<BluetoothService>();
     final wifiService = context.watch<WifiService>();
-
     final bool isConnected = btService.isConnected || wifiService.isConnected;
 
-    // 🟢 PERF: Sort descending (newest first) to support reverse: true ListView
-    final List<Message> allMessages = [
-      ...btService.messages,
-      ...wifiService.messages
-    ]..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    _rebuildMessageCache();
 
     return Scaffold(
       backgroundColor: AppTheme.bgDeep,
@@ -85,16 +143,28 @@ class _ChatScreenState extends State<ChatScreen> {
           _SecurityStatusHeader(isWifi: wifiService.isConnected),
           Expanded(
             child: RepaintBoundary(
-              child: allMessages.isEmpty
+              child: _cachedMessages.isEmpty
                   ? _buildEmptyState()
-                  : _buildMessageList(allMessages),
+                  : _buildMessageList(_cachedMessages),
             ),
           ),
+          // Attachment preview sheet slides in above the input bar when a
+          // file has been chosen but not yet sent.
+          if (_pendingAttachment != null)
+            _AttachmentPreviewBar(
+              attachment: _pendingAttachment!,
+              captionController: _captionController,
+              onDismiss: _clearAttachment,
+              onSend: () => _sendAttachment(wifiService),
+              isSending: _isSending,
+            ),
           _buildInputArea(btService, wifiService, isConnected),
         ],
       ),
     );
   }
+
+  // ── AppBar ────────────────────────────────────────────────────────────────
 
   PreferredSizeWidget _buildAppBar(BuildContext context, BluetoothService bt,
       WifiService wifi, bool isConnected, bool isWide) {
@@ -141,29 +211,41 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  // ── Message list ──────────────────────────────────────────────────────────
+
   Widget _buildMessageList(List<Message> messages) {
     return ListView.builder(
-      // 🟢 PERF: Reversing the list eliminates the need for manual, janky scroll controllers.
-      // The newest messages naturally push upward from the bottom, instantly adapting to the keyboard.
       reverse: true,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
       itemCount: messages.length,
-      cacheExtent: 1500, // Keeps images slightly off-screen cached in memory
+      cacheExtent: 1500,
       itemBuilder: (context, index) {
         return _MessageBubble(
-            key: ValueKey(messages[index].id),
-            message: messages[index],
-            showCipher: _showEncrypted);
+          key: ValueKey(messages[index].id),
+          message: messages[index],
+          showCipher: _showEncrypted,
+        );
       },
     );
   }
 
+  // ── Input area ────────────────────────────────────────────────────────────
+
   Widget _buildInputArea(
       BluetoothService bt, WifiService wifi, bool isConnected) {
-    // 🟢 FIX: Correctly check viewInsetsOf for keyboard height
+    // While an attachment is staged, the preview bar owns the caption input
+    // and its own Send button, so collapse the main composer to just safe-area.
+    if (_pendingAttachment != null) {
+      return SizedBox(height: MediaQuery.paddingOf(context).bottom);
+    }
+
     final double bottomPadding = MediaQuery.viewInsetsOf(context).bottom > 0
         ? 12.0
         : MediaQuery.paddingOf(context).bottom + 12.0;
+
+    final bool canSend = isConnected && !_isSending;
+    // Attachment only works over WiFi (WiFiService carries the binary payload).
+    final bool canAttach = canSend && wifi.isConnected;
 
     return Container(
       padding: EdgeInsets.fromLTRB(12, 8, 12, bottomPadding),
@@ -173,16 +255,19 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
       child: Row(
         children: [
+          // ── Attachment button ────────────────────────────────────────
           IconButton(
-            icon: Icon(Icons.add_photo_alternate_outlined,
-                color: isConnected ? AppTheme.accentCyan : AppTheme.textDim),
-            onPressed: isConnected ? () => _pickAndSendImage(wifi) : null,
+            icon: Icon(Icons.attach_file_rounded,
+                color: canAttach ? AppTheme.accentCyan : AppTheme.textDim),
+            tooltip: 'Attach file or image',
+            onPressed: canAttach ? () => _showAttachMenu(context, wifi) : null,
           ),
+          // ── Text field ───────────────────────────────────────────────
           Expanded(
             child: TextField(
               controller: _controller,
               focusNode: _focusNode,
-              enabled: isConnected,
+              enabled: canSend,
               style: const TextStyle(color: AppTheme.textPrimary, fontSize: 14),
               textInputAction: TextInputAction.send,
               decoration: InputDecoration(
@@ -196,17 +281,18 @@ class _ChatScreenState extends State<ChatScreen> {
                     borderRadius: BorderRadius.circular(24),
                     borderSide: BorderSide.none),
               ),
-              onSubmitted: (_) => _sendMessage(bt, wifi),
+              onSubmitted: canSend ? (_) => _sendMessage(bt, wifi) : null,
             ),
           ),
           const SizedBox(width: 8),
+          // ── Send button ──────────────────────────────────────────────
           GlowContainer(
             child: IconButton(
-              onPressed: isConnected ? () => _sendMessage(bt, wifi) : null,
+              onPressed: canSend ? () => _sendMessage(bt, wifi) : null,
               icon: const Icon(Icons.send_rounded),
               style: IconButton.styleFrom(
                 backgroundColor:
-                    isConnected ? AppTheme.accentCyan : AppTheme.textDim,
+                    canSend ? AppTheme.accentCyan : AppTheme.textDim,
                 foregroundColor: AppTheme.bgDeep,
               ),
             ),
@@ -216,7 +302,31 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Future<void> _pickAndSendImage(WifiService wifi) async {
+  // ── Attach menu ───────────────────────────────────────────────────────────
+
+  void _showAttachMenu(BuildContext context, WifiService wifi) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppTheme.bgSurface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => _AttachMenuSheet(
+        onPickImage: () {
+          Navigator.pop(context);
+          _pickImage(wifi);
+        },
+        onPickDocument: () {
+          Navigator.pop(context);
+          _pickDocument(wifi);
+        },
+      ),
+    );
+  }
+
+  // ── Pick image ────────────────────────────────────────────────────────────
+
+  Future<void> _pickImage(WifiService wifi) async {
     if (!wifi.isConnected) return;
     try {
       final XFile? xfile = await ImagePicker().pickImage(
@@ -224,26 +334,120 @@ class _ChatScreenState extends State<ChatScreen> {
         imageQuality: 35,
         maxWidth: 800,
       );
-      if (xfile != null) {
-        final bytes = await xfile.readAsBytes();
-        await wifi.sendImage(bytes);
-      }
+      if (xfile == null) return;
+      if (!mounted) return;
+
+      final bytes = await xfile.readAsBytes();
+      if (!mounted) return;
+
+      setState(() {
+        _pendingAttachment = _PendingAttachment(
+          kind: _AttachKind.image,
+          name: xfile.name,
+          sizeBytes: bytes.length,
+          bytes: bytes,
+        );
+        _captionController.clear();
+      });
     } catch (e) {
-      debugPrint('Image Error: $e');
+      debugPrint('[Chat] Image pick error: $e');
     }
   }
 
-  void _sendMessage(BluetoothService bt, WifiService wifi) {
-    final text = _controller.text.trim();
-    if (text.isEmpty) return;
-    if (wifi.isConnected) {
-      wifi.sendMessage(text);
-    } else if (bt.isConnected) {
-      bt.sendMessage(text);
+  // ── Pick document ─────────────────────────────────────────────────────────
+
+  Future<void> _pickDocument(WifiService wifi) async {
+    if (!wifi.isConnected) return;
+    try {
+      final FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.any,
+        withData: true,
+      );
+      if (result == null || result.files.isEmpty) return;
+      if (!mounted) return;
+
+      final PlatformFile file = result.files.first;
+      final Uint8List? bytes = file.bytes;
+      if (bytes == null) return;
+
+      setState(() {
+        _pendingAttachment = _PendingAttachment(
+          kind: _AttachKind.document,
+          name: file.name,
+          sizeBytes: bytes.length,
+          bytes: bytes,
+        );
+        _captionController.clear();
+      });
+    } catch (e) {
+      debugPrint('[Chat] Document pick error: $e');
     }
-    _controller.clear();
+  }
+
+  // ── Send attachment ───────────────────────────────────────────────────────
+
+  Future<void> _sendAttachment(WifiService wifi) async {
+    final attachment = _pendingAttachment;
+    if (attachment == null || _isSending || !wifi.isConnected) return;
+
+    setState(() => _isSending = true);
+
+    try {
+      final caption = _captionController.text.trim().isEmpty
+          ? null
+          : _captionController.text.trim();
+
+      if (attachment.isImage) {
+        await wifi.sendImage(attachment.bytes, caption: caption);
+      } else {
+        await wifi.sendDocument(
+          attachment.bytes,
+          fileName: attachment.name,
+          caption: caption,
+        );
+      }
+
+      if (mounted) _clearAttachment();
+    } catch (e) {
+      debugPrint('[Chat] Attachment send error: $e');
+    } finally {
+      if (mounted) setState(() => _isSending = false);
+    }
+  }
+
+  void _clearAttachment() {
+    setState(() {
+      _pendingAttachment = null;
+      _captionController.clear();
+    });
     _focusNode.requestFocus();
   }
+
+  // ── Text message ──────────────────────────────────────────────────────────
+
+  Future<void> _sendMessage(BluetoothService bt, WifiService wifi) async {
+    final text = _controller.text.trim();
+    if (text.isEmpty || _isSending) return;
+
+    setState(() => _isSending = true);
+    _controller.clear();
+    _focusNode.requestFocus();
+
+    try {
+      if (wifi.isConnected) {
+        await wifi.sendMessage(text);
+      } else if (bt.isConnected) {
+        await bt.sendMessage(text);
+      }
+    } catch (e) {
+      debugPrint('[Chat] Send error: $e');
+      if (mounted) _controller.text = text;
+    } finally {
+      if (mounted) setState(() => _isSending = false);
+    }
+  }
+
+  // ── Misc ──────────────────────────────────────────────────────────────────
 
   Widget _buildEmptyState() {
     return Center(
@@ -267,6 +471,11 @@ class _ChatScreenState extends State<ChatScreen> {
         if (val == 'clear') {
           bt.clearMessages();
           wifi.clearMessages();
+          setState(() {
+            _lastBtCount = -1;
+            _lastWifiCount = -1;
+            _cachedMessages = [];
+          });
         }
         if (val == 'disconnect') {
           bt.disconnect();
@@ -283,6 +492,255 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 }
+
+// ── Attach menu bottom sheet ──────────────────────────────────────────────────
+
+class _AttachMenuSheet extends StatelessWidget {
+  final VoidCallback onPickImage;
+  final VoidCallback onPickDocument;
+
+  const _AttachMenuSheet(
+      {required this.onPickImage, required this.onPickDocument});
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Drag handle
+            Container(
+              width: 36,
+              height: 4,
+              margin: const EdgeInsets.only(bottom: 16),
+              decoration: BoxDecoration(
+                color: AppTheme.textDim.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            _AttachOption(
+              icon: Icons.image_outlined,
+              label: 'Send an image',
+              sublabel: 'Choose from gallery',
+              color: AppTheme.accentCyan,
+              onTap: onPickImage,
+            ),
+            _AttachOption(
+              icon: Icons.insert_drive_file_outlined,
+              label: 'Send as a document',
+              sublabel: 'Any file type',
+              color: AppTheme.accentGreen,
+              onTap: onPickDocument,
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AttachOption extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String sublabel;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _AttachOption({
+    required this.icon,
+    required this.label,
+    required this.sublabel,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      onTap: onTap,
+      leading: Container(
+        width: 44,
+        height: 44,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: color.withValues(alpha: 0.12),
+          border: Border.all(color: color.withValues(alpha: 0.3)),
+        ),
+        child: Icon(icon, color: color, size: 20),
+      ),
+      title: Text(label,
+          style: const TextStyle(
+              color: AppTheme.textPrimary,
+              fontSize: 14,
+              fontWeight: FontWeight.w600)),
+      subtitle: Text(sublabel,
+          style: const TextStyle(color: AppTheme.textDim, fontSize: 11)),
+    );
+  }
+}
+
+// ── Attachment preview bar ────────────────────────────────────────────────────
+
+/// Appears above the input bar once a file has been chosen.
+/// Mirrors the Telegram "Send an image / Send as a file" UX:
+/// thumbnail (or doc icon) + filename + size + caption field + Send.
+class _AttachmentPreviewBar extends StatelessWidget {
+  final _PendingAttachment attachment;
+  final TextEditingController captionController;
+  final VoidCallback onDismiss;
+  final VoidCallback onSend;
+  final bool isSending;
+
+  const _AttachmentPreviewBar({
+    required this.attachment,
+    required this.captionController,
+    required this.onDismiss,
+    required this.onSend,
+    required this.isSending,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final double bottomPadding = MediaQuery.viewInsetsOf(context).bottom > 0
+        ? 12.0
+        : MediaQuery.paddingOf(context).bottom + 12.0;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: AppTheme.bgSurface,
+        border: const Border(
+            top: BorderSide(color: AppTheme.borderGlow, width: 0.5)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // ── Preview row ──────────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 8, 6),
+            child: Row(
+              children: [
+                _buildLeading(),
+                const SizedBox(width: 12),
+                Expanded(child: _buildFileInfo()),
+                IconButton(
+                  icon: const Icon(Icons.close,
+                      size: 18, color: AppTheme.textSecondary),
+                  onPressed: onDismiss,
+                  visualDensity: VisualDensity.compact,
+                ),
+              ],
+            ),
+          ),
+          // ── Caption + send ───────────────────────────────────────────
+          Padding(
+            padding: EdgeInsets.fromLTRB(12, 0, 12, bottomPadding),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: captionController,
+                    autofocus: true,
+                    style: const TextStyle(
+                        color: AppTheme.textPrimary, fontSize: 14),
+                    decoration: InputDecoration(
+                      hintText: 'Caption',
+                      hintStyle: const TextStyle(color: AppTheme.textDim),
+                      fillColor: AppTheme.bgDeep,
+                      filled: true,
+                      isDense: true,
+                      border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(24),
+                          borderSide: BorderSide.none),
+                    ),
+                    textInputAction: TextInputAction.send,
+                    onSubmitted: isSending ? null : (_) => onSend(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                GlowContainer(
+                  child: IconButton(
+                    onPressed: isSending ? null : onSend,
+                    icon: isSending
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: AppTheme.bgDeep))
+                        : const Icon(Icons.send_rounded),
+                    style: IconButton.styleFrom(
+                      backgroundColor:
+                          isSending ? AppTheme.textDim : AppTheme.accentCyan,
+                      foregroundColor: AppTheme.bgDeep,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLeading() {
+    if (attachment.isImage) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: Image.memory(
+          attachment.bytes,
+          width: 56,
+          height: 56,
+          fit: BoxFit.cover,
+          gaplessPlayback: true,
+          errorBuilder: (_, __, ___) =>
+              const Icon(Icons.broken_image, color: AppTheme.danger, size: 40),
+        ),
+      );
+    }
+    return Container(
+      width: 48,
+      height: 48,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: AppTheme.accentGreen.withValues(alpha: 0.12),
+        border: Border.all(color: AppTheme.accentGreen.withValues(alpha: 0.3)),
+      ),
+      child: const Icon(Icons.insert_drive_file_outlined,
+          color: AppTheme.accentGreen, size: 24),
+    );
+  }
+
+  Widget _buildFileInfo() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          attachment.isImage ? 'Send an image' : 'Send as a file',
+          style: const TextStyle(
+              color: AppTheme.textPrimary,
+              fontSize: 13,
+              fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          attachment.name,
+          style: const TextStyle(color: AppTheme.textDim, fontSize: 11),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        Text(
+          attachment.sizeLabel,
+          style: const TextStyle(color: AppTheme.textDim, fontSize: 10),
+        ),
+      ],
+    );
+  }
+}
+
+// ── Static widgets ────────────────────────────────────────────────────────────
 
 class _SecurityStatusHeader extends StatelessWidget {
   final bool isWifi;
@@ -353,7 +811,7 @@ class _MessageBubble extends StatelessWidget {
         children: [
           GestureDetector(
             onLongPress: () {
-              if (!message.isImage) {
+              if (!message.isImage && !message.isDocument) {
                 Clipboard.setData(ClipboardData(text: message.text));
                 ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(content: Text('Copied to clipboard')));
@@ -363,7 +821,8 @@ class _MessageBubble extends StatelessWidget {
               margin: const EdgeInsets.symmetric(vertical: 4),
               constraints: BoxConstraints(
                   maxWidth: MediaQuery.sizeOf(context).width * 0.75),
-              padding: EdgeInsets.all(message.isImage ? 4 : 12),
+              padding: EdgeInsets.all(
+                  (message.isImage || message.isDocument) ? 4 : 12),
               decoration: BoxDecoration(
                 color: isMe
                     ? AppTheme.accentCyan.withValues(alpha: 0.12)
@@ -381,23 +840,23 @@ class _MessageBubble extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   if (message.isImage)
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: Image.memory(
-                        base64Decode(message.text),
-                        fit: BoxFit.cover,
-                        cacheWidth: 500,
-                        // 🟢 FIX: Prevents images from flickering white when scrolled rapidly
-                        gaplessPlayback: true,
-                        errorBuilder: (_, __, ___) => const Icon(
-                            Icons.broken_image,
-                            color: AppTheme.danger),
-                      ),
-                    )
+                    _ImageContent(message: message)
+                  else if (message.isDocument)
+                    _DocumentContent(message: message)
                   else
                     Text(message.text,
                         style: const TextStyle(
                             color: AppTheme.textPrimary, fontSize: 14)),
+                  // Optional caption shown below image or document
+                  if ((message.isImage || message.isDocument) &&
+                      message.caption != null &&
+                      message.caption!.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(8, 6, 8, 4),
+                      child: Text(message.caption!,
+                          style: const TextStyle(
+                              color: AppTheme.textPrimary, fontSize: 13)),
+                    ),
                   if (showCipher)
                     Container(
                       margin: const EdgeInsets.only(top: 8),
@@ -417,6 +876,87 @@ class _MessageBubble extends StatelessWidget {
           ),
           Text(message.timeString,
               style: const TextStyle(color: AppTheme.textDim, fontSize: 9)),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Image bubble ──────────────────────────────────────────────────────────────
+
+class _ImageContent extends StatelessWidget {
+  final Message message;
+  const _ImageContent({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    final bytes = message.imageBytes;
+    if (bytes == null) {
+      return const Padding(
+        padding: EdgeInsets.all(8),
+        child: Icon(Icons.broken_image, color: AppTheme.danger),
+      );
+    }
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: Image.memory(
+        bytes,
+        fit: BoxFit.cover,
+        cacheWidth: 500,
+        gaplessPlayback: true,
+        errorBuilder: (_, __, ___) =>
+            const Icon(Icons.broken_image, color: AppTheme.danger),
+      ),
+    );
+  }
+}
+
+// ── Document bubble ───────────────────────────────────────────────────────────
+
+class _DocumentContent extends StatelessWidget {
+  final Message message;
+  const _DocumentContent({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(8),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: AppTheme.accentGreen.withValues(alpha: 0.12),
+              border: Border.all(
+                  color: AppTheme.accentGreen.withValues(alpha: 0.3)),
+            ),
+            child: const Icon(Icons.insert_drive_file_outlined,
+                color: AppTheme.accentGreen, size: 20),
+          ),
+          const SizedBox(width: 10),
+          Flexible(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  message.fileName ?? 'Document',
+                  style: const TextStyle(
+                      color: AppTheme.textPrimary,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                if (message.fileSizeLabel != null)
+                  Text(message.fileSizeLabel!,
+                      style: const TextStyle(
+                          color: AppTheme.textDim, fontSize: 10)),
+              ],
+            ),
+          ),
         ],
       ),
     );
