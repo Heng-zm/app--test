@@ -691,8 +691,14 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: Text(
                     isConnecting ? '...' : 'LINK',
                     style: TextStyle(
+<<<<<<< HEAD
                       color:
                           isConnecting ? AppTheme.textDim : AppTheme.accentCyan,
+=======
+                      color: isConnecting
+                          ? AppTheme.textDim
+                          : AppTheme.accentCyan,
+>>>>>>> c6a238243a957b6fe802dbc36dca62661ec7b8c2
                       fontSize: 10,
                       fontWeight: FontWeight.bold,
                       letterSpacing: 1,
